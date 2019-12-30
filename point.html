@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Point</title>
+    <style>
+        html, body {
+            margin: 0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+<canvas id="webgpu-canvas"></canvas>
+<script>
+(async () => {
+    const adapter = await navigator.gpu.requestAdapter();
+    const device = await adapter.requestDevice();
+    const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
+    
+    const canvas = document.getElementById("webgpu-canvas");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const context = canvas.getContext("gpupresent");
+    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
+    const swapChain = context.configureSwapChain({
+        device,
+        format: swapChainFormat
+    });
+
+    const vs = `
+    #version 450
+    
+    void main() {
+        gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+    } 
+    `.trim();
+
+    const fs = `
+    #version 450
+    
+    layout(location=0) out vec4 fragColor;
+
+    void main() {
+        fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+    } 
+    `.trim();
+
+    const pipeline = device.createRenderPipeline({
+        vertexStage: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(vs, "vertex")
+            }),
+            entryPoint: "main"
+        },
+        fragmentStage: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(fs, "fragment")
+            }),
+            entryPoint: "main"
+        },
+        primitiveTopology: "point-list",
+        colorStates: [{
+            format: swapChainFormat
+        }]
+    });
+
+    const commandEncoder = device.createCommandEncoder();
+    const textureView = swapChain.getCurrentTexture().createView();
+
+    const renderPass = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+            attachment: textureView,
+            loadValue: [0, 0, 0, 1]
+        }]
+    });
+    renderPass.setPipeline(pipeline);
+    renderPass.draw(1, 1, 0, 0);
+    renderPass.endPass();
+
+    device.defaultQueue.submit([commandEncoder.finish()]);
+})();
+</script>
+</body>
+</html>

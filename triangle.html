@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Triangle</title>
+    <style>
+        html, body {
+            margin: 0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+<canvas id="webgpu-canvas"></canvas>
+<script>
+(async () => {
+    const adapter = await navigator.gpu.requestAdapter();
+    const device = await adapter.requestDevice();
+    const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
+    
+    const canvas = document.getElementById("webgpu-canvas");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const context = canvas.getContext("gpupresent");
+    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
+    const swapChain = context.configureSwapChain({
+        device,
+        format: swapChainFormat
+    });
+
+    const vs = `
+    #version 450
+
+    layout(location=0) in vec4 position;
+    layout(location=1) in vec4 color;
+
+    layout(location=0) out vec4 vColor;
+    
+    void main() {
+        vColor = color;
+        gl_Position = position;
+    } 
+    `.trim();
+
+    const fs = `
+    #version 450
+    
+    layout(location=0) in vec4 vColor;
+
+    layout(location=0) out vec4 fragColor;
+
+    void main() {
+        fragColor = vColor;
+    } 
+    `.trim();
+
+    const pipeline = device.createRenderPipeline({
+        vertexStage: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(vs, "vertex")
+            }),
+            entryPoint: "main"
+        },
+        fragmentStage: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(fs, "fragment")
+            }),
+            entryPoint: "main"
+        },
+        primitiveTopology: "triangle-list",
+        vertexState: {
+            vertexBuffers: [
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float2",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 4,
+                    attributes: [{
+                        shaderLocation: 1,
+                        format: "uchar4norm",
+                        offset: 0
+                    }]
+                }
+            ]
+        },
+        colorStates: [{
+            format: swapChainFormat
+        }]
+    });
+
+    const [positionBuffer, positionBufferMap] = device.createBufferMapped({
+        size: 24,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    new Float32Array(positionBufferMap).set([
+        -0.5, -0.5,
+        0.5, -0.5,
+        0.0, 0.5
+    ]);
+    positionBuffer.unmap();
+
+    const [colorBuffer, colorBufferMap] = device.createBufferMapped({
+        size: 12,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    new Uint8Array(colorBufferMap).set([
+        255, 0, 0, 255,
+        0, 255, 0, 255,
+        0, 0, 255, 255
+    ]);
+    colorBuffer.unmap();
+
+    const commandEncoder = device.createCommandEncoder();
+    const textureView = swapChain.getCurrentTexture().createView();
+
+    const renderPass = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+            attachment: textureView,
+            loadValue: [0, 0, 0, 1]
+        }]
+    });
+    renderPass.setPipeline(pipeline);
+    renderPass.setVertexBuffer(0, positionBuffer);
+    renderPass.setVertexBuffer(1, colorBuffer);
+    renderPass.draw(3, 1, 0, 0);
+    renderPass.endPass();
+
+    device.defaultQueue.submit([commandEncoder.finish()]);
+})();
+</script>
+</body>
+</html>
