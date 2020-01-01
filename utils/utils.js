@@ -40,6 +40,9 @@
     const ZEROS = [0, 0, 0];
     const ONES = [1, 1, 1];
 
+    let textureDataCanvas = document.createElement("canvas");
+    let textureDataCtx = textureDataCanvas.getContext("2d");
+
     window.utils = {
         xformMatrix(xform, translate, rotate, scale) {
             translate = translate || ZEROS;
@@ -56,6 +59,13 @@
             mat4.multiply(xform, rotateYMat, xform);
             mat4.multiply(xform, rotateZMat, xform);
             mat4.multiply(xform, translateMat, xform);
+        },
+
+        getImageData(img) {
+            textureDataCanvas.width = img.width;
+            textureDataCanvas.height = img.height;
+            textureDataCtx.drawImage(img, 0, 0);
+            return textureDataCtx.getImageData(0, 0, img.width, img.height).data;
         },
 
         loadImages(urls) {

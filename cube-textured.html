@@ -18,6 +18,44 @@
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
     const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
+
+    const img = document.createElement("img");
+    img.src = "img/pavement.jpg";
+    await img.decode();
+
+    const textureData = utils.getImageData(img);
+    const textureDataBuffer = device.createBuffer({
+        size: textureData.byteLength,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+    });
+
+    textureDataBuffer.setSubData(0, textureData);
+
+    const texture = device.createTexture({
+        size: [img.width, img.height, 1],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.SAMPLED | GPUTextureUsage.COPY_DST
+    });
+
+    const textureLoadEncoder = device.createCommandEncoder();
+    textureLoadEncoder.copyBufferToTexture({
+        buffer: textureDataBuffer,
+        rowPitch: img.width * 4,
+        imageHeight: img.height
+    }, {
+        texture,
+    }, [
+        img.width, 
+        img.height, 
+        1
+    ]);
+
+    device.defaultQueue.submit([textureLoadEncoder.finish()]);
+
+    const sampler = device.createSampler({
+        minFilter: "linear",
+        magFilter: "linear"
+    });
     
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -35,15 +73,18 @@
 
     layout(location=0) in vec4 position;
     layout(location=1) in vec3 normal;
+    layout(location=2) in vec2 uv;
 
     layout(set=0, binding=0) uniform SceneUniforms {
         mat4 mvpMatrix;
     };
 
     layout(location=0) out vec3 vNormal;
+    layout(location=1) out vec2 vUV;
     
     void main() {
         vNormal = normal;
+        vUV = uv;
         gl_Position = mvpMatrix * position;
     } 
     `.trim();
@@ -52,20 +93,36 @@
     #version 450
     
     layout(location=0) in vec3 vNormal;
+    layout(location=1) in vec2 vUV;
+
+    layout(set=0, binding=1) uniform sampler textureSampler;
+    layout(set=0, binding=2) uniform texture2D textureData;
 
     layout(location=0) out vec4 fragColor;
 
     void main() {
-        fragColor = vec4(abs(vNormal), 1.0);
+        fragColor = texture(sampler2D(textureData, textureSampler), vUV);
     } 
     `.trim();
 
     const sceneUniformBindGroupLayout = device.createBindGroupLayout({
-        bindings: [{
-            binding: 0,
-            visibility: GPUShaderStage.VERTEX,
-            type: "uniform-buffer"
-        }]
+        bindings: [
+            {
+                binding: 0,
+                visibility: GPUShaderStage.VERTEX,
+                type: "uniform-buffer"
+            },
+            {
+                binding: 1,
+                visibility: GPUShaderStage.FRAGMENT,
+                type: "sampler"
+            },
+            {
+                binding: 2,
+                visibility: GPUShaderStage.FRAGMENT,
+                type: "sampled-texture"
+            }
+        ]
     });
 
     const pipeline = device.createRenderPipeline({
@@ -105,6 +162,14 @@
                         format: "float3",
                         offset: 0
                     }]
+                },
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 2,
+                        format: "float2",
+                        offset: 0
+                    }]
                 }
             ]
         },
@@ -124,9 +189,15 @@
         size: cubeData.normals.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
+    const uvBuffer = device.createBuffer({
+        size: cubeData.uvs.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+
 
     positionBuffer.setSubData(0, cubeData.positions);
     normalBuffer.setSubData(0, cubeData.normals);
+    uvBuffer.setSubData(0, cubeData.uvs);
 
     const sceneUniformBuffer = device.createBuffer({
         size: 64,
@@ -135,12 +206,23 @@
 
     const sceneUniformBindGroup = device.createBindGroup({
         layout: sceneUniformBindGroupLayout,
-        bindings: [{
-            binding: 0,
-            resource: {
-                buffer: sceneUniformBuffer
+        bindings: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: sceneUniformBuffer
+                }
+            },
+            {
+                binding: 1,
+                resource: sampler
+            },
+            {
+                binding: 2,
+                resource: texture.createView()
             }
-        }]
+
+        ]
     });
 
     const depthTexture = device.createTexture({
@@ -191,6 +273,7 @@
         renderPass.setPipeline(pipeline);
         renderPass.setVertexBuffer(0, positionBuffer);
         renderPass.setVertexBuffer(1, normalBuffer);
+        renderPass.setVertexBuffer(2, uvBuffer);
         renderPass.setBindGroup(0, sceneUniformBindGroup);
         renderPass.draw(numVertices, 1, 0, 0);
         renderPass.endPass();
