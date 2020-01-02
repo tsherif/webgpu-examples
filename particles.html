@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Particles</title>
+    <style>
+        html, body {
+            margin: 0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+<canvas id="webgpu-canvas"></canvas>
+<script>
+(async () => {
+    const NUM_PARTICLES = 100000;
+    const PARTICLE_SIZE = 2;
+
+    const adapter = await navigator.gpu.requestAdapter();
+    const device = await adapter.requestDevice();
+    const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
+    
+    const canvas = document.getElementById("webgpu-canvas");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const context = canvas.getContext("gpupresent");
+    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
+    const swapChain = context.configureSwapChain({
+        device,
+        format: swapChainFormat
+    });
+
+    const vs = `
+    #version 450
+
+    layout(location=0) in vec2 vertexPosition;
+    layout(location=1) in vec4 color;
+    layout(location=2) in vec3 position;
+
+    layout(set=0, binding=0) uniform VertexUniforms {
+        vec2 screenDimensions;
+        float particleSize;
+    };
+
+    layout(location=0) out vec4 vColor;
+    
+    void main() {
+        vColor = color;
+        gl_Position = vec4(vertexPosition * particleSize / screenDimensions + position.xy, position.z, 1.0);
+    } 
+    `.trim();
+
+    const fs = `
+    #version 450
+    
+    layout(location=0) in vec4 vColor;
+
+    layout(location=0) out vec4 fragColor;
+
+    void main() {
+        fragColor = vColor;
+    } 
+    `.trim();
+
+    const vertexUniformBindGroupLayout = device.createBindGroupLayout({
+        bindings: [{
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX,
+            type: "uniform-buffer"
+        }]
+    });
+
+    const pipeline = device.createRenderPipeline({
+        layout: device.createPipelineLayout({bindGroupLayouts: [vertexUniformBindGroupLayout]}),
+        vertexStage: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(vs, "vertex")
+            }),
+            entryPoint: "main"
+        },
+        fragmentStage: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(fs, "fragment")
+            }),
+            entryPoint: "main"
+        },
+        primitiveTopology: "triangle-strip",
+        vertexState: {
+            vertexBuffers: [
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float2",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 4,
+                    stepMode: "instance",
+                    attributes: [{
+                        shaderLocation: 1,
+                        format: "uchar4norm",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 12,
+                    stepMode: "instance",
+                    attributes: [{
+                        shaderLocation: 2,
+                        format: "float3",
+                        offset: 0
+                    }]
+                }
+            ]
+        },
+        colorStates: [{
+            format: swapChainFormat
+        }]
+    });
+
+    const [vertexBuffer, vertexBufferMap] = device.createBufferMapped({
+        size: 32,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    new Float32Array(vertexBufferMap).set([
+        -1.0, -1.0,
+        1.0, -1.0,
+        -1.0, 1.0,
+        1.0, 1.0
+    ]);
+    vertexBuffer.unmap();
+
+    const [colorBuffer, colorBufferMap] = device.createBufferMapped({
+        size: 4 * NUM_PARTICLES,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    const colorBufferData = new Uint8Array(colorBufferMap);
+    for (let i = 0; i < colorBufferData.length; i += 4) {
+        colorBufferData[i]     = Math.floor(Math.random() * 256);
+        colorBufferData[i + 1] = Math.floor(Math.random() * 256);
+        colorBufferData[i + 2] = Math.floor(Math.random() * 256);
+        colorBufferData[i + 3] = 255;
+    }
+    colorBuffer.unmap();
+
+    const [positionBuffer, positionBufferMap] = device.createBufferMapped({
+        size: 12 * NUM_PARTICLES,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    const positionBufferData = new Float32Array(positionBufferMap);
+    for (let i = 0; i < positionBufferData.length; i += 3) {
+        positionBufferData[i]     = Math.random() * 2 - 1;
+        positionBufferData[i + 1] = Math.random() * 2 - 1;
+        positionBufferData[i + 2] = Math.random() * 2 - 1;
+    }
+    positionBuffer.unmap();
+
+    const vertexUniformBuffer = device.createBuffer({
+        size: 64,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    vertexUniformBuffer.setSubData(0, new Float32Array([
+        canvas.width, canvas.height, PARTICLE_SIZE
+    ]));
+
+    const vertexUniformBindGroup = device.createBindGroup({
+        layout: vertexUniformBindGroupLayout,
+        bindings: [{
+            binding: 0,
+            resource: {
+                buffer: vertexUniformBuffer
+            }
+        }]
+    });
+
+    const commandEncoder = device.createCommandEncoder();
+    const textureView = swapChain.getCurrentTexture().createView();
+
+    const renderPass = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+            attachment: textureView,
+            loadValue: [0, 0, 0, 1]
+        }]
+    });
+    renderPass.setPipeline(pipeline);
+    renderPass.setVertexBuffer(0, vertexBuffer);
+    renderPass.setVertexBuffer(1, colorBuffer);
+    renderPass.setVertexBuffer(2, positionBuffer);
+    renderPass.setBindGroup(0, vertexUniformBindGroup);
+    renderPass.draw(4, NUM_PARTICLES, 0, 0);
+    renderPass.endPass();
+
+    device.defaultQueue.submit([commandEncoder.finish()]);
+})();
+</script>
+</body>
+</html>
