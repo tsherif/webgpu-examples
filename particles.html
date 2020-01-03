@@ -13,7 +13,7 @@
 <canvas id="webgpu-canvas"></canvas>
 <script>
 (async () => {
-    const NUM_PARTICLES = 10000;
+    const NUM_PARTICLES = 50000;
     const PARTICLE_SIZE = 2;
 
     const adapter = await navigator.gpu.requestAdapter();
@@ -50,10 +50,36 @@
         vec4 velocityOut[${NUM_PARTICLES}];
     }; 
 
+    layout(std140, set = 0, binding = 4) uniform Mass {
+        vec4 mass1Position;
+        vec4 mass2Position;
+        vec4 mass3Position;
+        float mass1Factor;
+        float mass2Factor;
+        float mass3Factor;
+    };
+
     void main() {
         uint index = gl_GlobalInvocationID.x;
-        positionsOut[index].xyz = positionsIn[index].xyz + velocityIn[index].xyz;
-        velocityOut[index] = velocityIn[index];
+
+        vec3 position = positionsIn[index].xyz;
+        vec3 velocity = velocityIn[index].xyz;
+
+        vec3 massVec = mass1Position.xyz - position;
+        float massDist2 = max(0.01, dot(massVec, massVec));
+        vec3 acceleration = mass1Factor * normalize(massVec) / massDist2;
+        massVec = mass2Position.xyz - position;
+        massDist2 = max(0.01, dot(massVec, massVec));
+        acceleration += mass2Factor * normalize(massVec) / massDist2;
+        massVec = mass3Position.xyz - position;
+        massDist2 = max(0.01, dot(massVec, massVec));
+        acceleration += mass3Factor * normalize(massVec) / massDist2;
+
+        velocity += acceleration;
+        velocity *= 0.9999;
+
+        positionsOut[index].xyz = position + velocity;
+        velocityOut[index].xyz = velocity;
     }
 
     `.trim();
@@ -79,6 +105,11 @@
                 binding: 3,
                 visibility: GPUShaderStage.COMPUTE,
                 type: "storage-buffer"
+            },
+            {
+                binding: 4,
+                visibility: GPUShaderStage.COMPUTE,
+                type: "uniform-buffer"
             }
         ]
     });
@@ -244,8 +275,22 @@
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
     });
 
+    const computeUniformData = new Float32Array([
+        Math.random() * 2.0 - 1.0, Math.random() * 2.0 - 1.0, 0, 1.0,
+        Math.random() * 2.0 - 1.0, Math.random() * 2.0 - 1.0, 0, 1.0,
+        Math.random() * 2.0 - 1.0, Math.random() * 2.0 - 1.0, 0, 1.0,
+        Math.random() / 30000, Math.random() / 30000, Math.random() / 30000, 0
+    ]);
+
+    const computeUniformBuffer = device.createBuffer({
+        size: computeUniformData.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    computeUniformBuffer.setSubData(0, computeUniformData);
+
     const vertexUniformBuffer = device.createBuffer({
-        size: 64,
+        size: 16,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
@@ -279,6 +324,12 @@
                 resource: {
                     buffer: velocityBufferB
                 }
+            },
+            {
+                binding: 4,
+                resource: {
+                    buffer: computeUniformBuffer
+                }
             }
         ]
     });
@@ -308,6 +359,12 @@
                 binding: 3,
                 resource: {
                     buffer: velocityBufferA
+                }
+            },
+            {
+                binding: 4,
+                resource: {
+                    buffer: computeUniformBuffer
                 }
             }
         ]
