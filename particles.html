@@ -13,7 +13,7 @@
 <canvas id="webgpu-canvas"></canvas>
 <script>
 (async () => {
-    const NUM_PARTICLES = 100000;
+    const NUM_PARTICLES = 10000;
     const PARTICLE_SIZE = 2;
 
     const adapter = await navigator.gpu.requestAdapter();
@@ -29,6 +29,68 @@
     const swapChain = context.configureSwapChain({
         device,
         format: swapChainFormat
+    });
+
+    const cs = `
+    #version 450
+
+    layout(std140, set = 0, binding = 0) buffer PositionsIn {
+        vec4 positionsIn[${NUM_PARTICLES}];
+    };
+
+    layout(std140, set = 0, binding = 1) buffer VelocityIn {
+        vec4 velocityIn[${NUM_PARTICLES}];
+    };
+
+    layout(std140, set = 0, binding = 2) buffer PositionsOut {
+        vec4 positionsOut[${NUM_PARTICLES}];
+    }; 
+
+    layout(std140, set = 0, binding = 3) buffer VelocityOut {
+        vec4 velocityOut[${NUM_PARTICLES}];
+    }; 
+
+    void main() {
+        uint index = gl_GlobalInvocationID.x;
+        positionsOut[index].xyz = positionsIn[index].xyz + velocityIn[index].xyz;
+        velocityOut[index] = velocityIn[index];
+    }
+
+    `.trim();
+
+    const computeBindGroupLayout = device.createBindGroupLayout({
+        bindings: [
+            {
+                binding: 0,
+                visibility: GPUShaderStage.COMPUTE,
+                type: "storage-buffer"
+            },
+            {
+                binding: 1,
+                visibility: GPUShaderStage.COMPUTE,
+                type: "storage-buffer"
+            },
+            {
+                binding: 2,
+                visibility: GPUShaderStage.COMPUTE,
+                type: "storage-buffer"
+            },
+            {
+                binding: 3,
+                visibility: GPUShaderStage.COMPUTE,
+                type: "storage-buffer"
+            }
+        ]
+    });
+
+    const computePipeline = device.createComputePipeline({
+        layout: device.createPipelineLayout({bindGroupLayouts: [computeBindGroupLayout]}),
+        computeStage: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(cs, "compute")
+            }),
+            entryPoint: "main"
+        }
     });
 
     const vs = `
@@ -106,11 +168,11 @@
                     }]
                 },
                 {
-                    arrayStride: 12,
+                    arrayStride: 16,
                     stepMode: "instance",
                     attributes: [{
                         shaderLocation: 2,
-                        format: "float3",
+                        format: "float4",
                         offset: 0
                     }]
                 }
@@ -146,17 +208,41 @@
     }
     colorBuffer.unmap();
 
-    const [positionBuffer, positionBufferMap] = device.createBufferMapped({
-        size: 12 * NUM_PARTICLES,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    const [positionBufferA, positionBufferMap] = device.createBufferMapped({
+        size: 16 * NUM_PARTICLES,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
     });
     const positionBufferData = new Float32Array(positionBufferMap);
-    for (let i = 0; i < positionBufferData.length; i += 3) {
+    for (let i = 0; i < positionBufferData.length; i += 4) {
         positionBufferData[i]     = Math.random() * 2 - 1;
         positionBufferData[i + 1] = Math.random() * 2 - 1;
         positionBufferData[i + 2] = Math.random() * 2 - 1;
+        positionBufferData[i + 3] = 1;
     }
-    positionBuffer.unmap();
+    positionBufferA.unmap();
+
+    const [velocityBufferA, velocityBufferMap] = device.createBufferMapped({
+        size: 16 * NUM_PARTICLES,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
+    });
+    const velocityBufferData = new Float32Array(velocityBufferMap);
+    for (let i = 0; i < velocityBufferData.length; i += 4) {
+        velocityBufferData[i]     = Math.random() * 0.002 - 0.001;
+        velocityBufferData[i + 1] = Math.random() * 0.002 - 0.001;
+        velocityBufferData[i + 2] = 0;
+        velocityBufferData[i + 3] = 1;
+    }
+    velocityBufferA.unmap();
+
+    const positionBufferB = device.createBuffer({
+        size: 16 * NUM_PARTICLES,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
+    });
+
+    const velocityBufferB = device.createBuffer({
+        size: 16 * NUM_PARTICLES,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
+    });
 
     const vertexUniformBuffer = device.createBuffer({
         size: 64,
@@ -166,6 +252,66 @@
     vertexUniformBuffer.setSubData(0, new Float32Array([
         canvas.width, canvas.height, PARTICLE_SIZE
     ]));
+
+    const computeBindGroupA2B = device.createBindGroup({
+        layout: computeBindGroupLayout,
+        bindings: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: positionBufferA
+                }
+            },
+            {
+                binding: 1,
+                resource: {
+                    buffer: velocityBufferA
+                }
+            },
+            {
+                binding: 2,
+                resource: {
+                    buffer: positionBufferB
+                }
+            },
+            {
+                binding: 3,
+                resource: {
+                    buffer: velocityBufferB
+                }
+            }
+        ]
+    });
+
+    const computeBindGroupB2A = device.createBindGroup({
+        layout: computeBindGroupLayout,
+        bindings: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: positionBufferB
+                }
+            },
+            {
+                binding: 1,
+                resource: {
+                    buffer: velocityBufferB
+                }
+            },
+            {
+                binding: 2,
+                resource: {
+                    buffer: positionBufferA
+                }
+            },
+            {
+                binding: 3,
+                resource: {
+                    buffer: velocityBufferA
+                }
+            }
+        ]
+    });
 
     const vertexUniformBindGroup = device.createBindGroup({
         layout: vertexUniformBindGroupLayout,
@@ -177,24 +323,42 @@
         }]
     });
 
-    const commandEncoder = device.createCommandEncoder();
-    const textureView = swapChain.getCurrentTexture().createView();
-
-    const renderPass = commandEncoder.beginRenderPass({
+    let currentPositionBuffer = positionBufferB;
+    let currentVelocityBuffer = velocityBufferB;
+    const renderPassDescriptor = {
         colorAttachments: [{
-            attachment: textureView,
+            attachment: swapChain.getCurrentTexture().createView(),
             loadValue: [0, 0, 0, 1]
         }]
-    });
-    renderPass.setPipeline(pipeline);
-    renderPass.setVertexBuffer(0, vertexBuffer);
-    renderPass.setVertexBuffer(1, colorBuffer);
-    renderPass.setVertexBuffer(2, positionBuffer);
-    renderPass.setBindGroup(0, vertexUniformBindGroup);
-    renderPass.draw(4, NUM_PARTICLES, 0, 0);
-    renderPass.endPass();
+    };
 
-    device.defaultQueue.submit([commandEncoder.finish()]);
+    requestAnimationFrame(function draw() {
+        const currentComputeBindGroup = currentPositionBuffer === positionBufferA ? computeBindGroupB2A : computeBindGroupA2B;
+
+        const commandEncoder = device.createCommandEncoder();
+
+        const computePass = commandEncoder.beginComputePass();
+        computePass.setPipeline(computePipeline);
+        computePass.setBindGroup(0, currentComputeBindGroup);
+        computePass.dispatch(NUM_PARTICLES);
+        computePass.endPass();
+
+        renderPassDescriptor.colorAttachments[0].attachment = swapChain.getCurrentTexture().createView();
+        const renderPass = commandEncoder.beginRenderPass(renderPassDescriptor);
+        renderPass.setPipeline(pipeline);
+        renderPass.setVertexBuffer(0, vertexBuffer);
+        renderPass.setVertexBuffer(1, colorBuffer);
+        renderPass.setVertexBuffer(2, currentPositionBuffer);
+        renderPass.setBindGroup(0, vertexUniformBindGroup);
+        renderPass.draw(4, NUM_PARTICLES, 0, 0);
+        renderPass.endPass();
+
+        device.defaultQueue.submit([commandEncoder.finish()]);
+    
+        currentPositionBuffer = currentPositionBuffer === positionBufferA ? positionBufferB : positionBufferA;
+
+        requestAnimationFrame(draw);
+    });
 })();
 </script>
 </body>
