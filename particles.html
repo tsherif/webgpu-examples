@@ -156,6 +156,7 @@ utils.addDescription(
 
     void main() {
         fragColor = vColor;
+        fragColor.rgb *= fragColor.a;
     } 
     `.trim();
 
@@ -213,7 +214,15 @@ utils.addDescription(
             ]
         },
         colorStates: [{
-            format: swapChainFormat
+            format: swapChainFormat,
+            colorBlend: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha"
+            },
+            alphaBlend: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha"
+            }
         }]
     });
 
@@ -238,7 +247,7 @@ utils.addDescription(
         colorBufferData[i]     = Math.floor(Math.random() * 256);
         colorBufferData[i + 1] = Math.floor(Math.random() * 256);
         colorBufferData[i + 2] = Math.floor(Math.random() * 256);
-        colorBufferData[i + 3] = 255;
+        colorBufferData[i + 3] = 128;
     }
     colorBuffer.unmap();
 
