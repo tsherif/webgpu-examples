@@ -1,0 +1,23 @@
+html, body {
+    margin: 0;
+    overflow: hidden;
+}
+
+#description {
+	position: absolute;
+	top: 20px;
+	left: 20px;
+	background-color: grey;
+	color: white;
+	padding: 0.5em;
+	font-size: 18px;
+}
+
+#description h2 {
+	margin: 0;
+	font-size: 1.1em;
+}
+
+#description div {
+	margin: 4px;
+}

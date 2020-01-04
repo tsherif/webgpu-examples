@@ -44,6 +44,23 @@
     let textureDataCtx = textureDataCanvas.getContext("2d");
 
     window.utils = {
+        addDescription(title, description, url) {
+            title = `WebGPU Example: ${title}`;
+
+            const titleElement = document.createElement("title");
+            titleElement.innerText = title;
+            document.head.appendChild(titleElement);
+
+            const descriptionElement = document.createElement("div");
+            descriptionElement.id = "description";
+            descriptionElement.innerHTML = `
+                <h2>${title}</h2>
+                <div>${description}</div>
+                <div><a href="https://github.com/tsherif/webgpu-examples/blob/master/${url}">Source Code</a></div>
+            `;
+            document.body.appendChild(descriptionElement);
+        },
+
         xformMatrix(xform, translate, rotate, scale) {
             translate = translate || ZEROS;
             rotate = rotate || ZEROS;
@@ -66,54 +83,6 @@
             textureDataCanvas.height = img.height;
             textureDataCtx.drawImage(img, 0, 0);
             return textureDataCtx.getImageData(0, 0, img.width, img.height).data;
-        },
-
-        loadImages(urls) {
-            return new Promise((resolve) => {
-                let numImages = urls.length;
-
-                let images = new Array(numImages);
-
-                function onload() {
-                    if (--numImages === 0) {
-                        resolve(images);
-                    }
-                }
-
-                for (let i = 0; i < numImages; ++i) {
-                    images[i] = new Image();
-                    images[i].onload = onload;
-                    images[i].src = urls[i];
-                }
-            });
-        },
-
-        loadImageArray(urls) {
-            return this.loadImages(urls).then((images) => {
-                let canvas = document.createElement("canvas");
-                let ctx = canvas.getContext("2d");
-                let width = images[0].width;
-                let height = images[0].height;
-                canvas.width = width;
-                canvas.height = height * images.length;
-
-                for (let i = 0, len = images.length; i < len; ++i) {
-                    ctx.drawImage(images[i], 0, i * height);
-                }
-
-                return new Promise((resolve) => {
-                    let image = new Image();
-                    image.onload = () => {
-                        resolve({
-                            data: image,
-                            width: width,
-                            height: height,
-                            length: images.length
-                        });
-                    }
-                    image.src = canvas.toDataURL();
-                });
-            });
         },
 
         createCube(options) {
@@ -403,55 +372,6 @@
                 uvs,
                 indices
             };
-        },
-
-        computeBoundingBox(position, options) {
-            options = options || {};
-            let buildGeometry = options.buildGeometry || false;
-
-            let boundary = {
-                min: vec3.create(),
-                max: vec3.create()
-            };
-            vec3.set(boundary.min, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-            vec3.set(boundary.max, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
-            for (let i = 0, len = position.length; i < len; i += 3) {
-                boundary.min[0] = Math.min(position[i], boundary.min[0]);
-                boundary.max[0] = Math.max(position[i], boundary.max[0]);
-                boundary.min[1] = Math.min(position[i + 1], boundary.min[1]);
-                boundary.max[1] = Math.max(position[i + 1], boundary.max[1]);
-                boundary.min[2] = Math.min(position[i + 2], boundary.min[2]);
-                boundary.max[2] = Math.max(position[i + 2], boundary.max[2]);
-            }
-
-            if (buildGeometry) {
-                let size = vec3.create();
-                vec3.subtract(size, boundary.max, boundary.min);
-                boundary.geometry = utils.createCube({
-                    position: boundary.min,
-                    dimensions: size
-                });
-            }
-
-            return boundary;
-        },
-
-        loadBinary(url) {
-            return new Promise((resolve) => {
-                let xhr = new XMLHttpRequest();
-                xhr.open("GET", url);
-                xhr.responseType = "arraybuffer";
-
-                xhr.onload = function() {
-                    resolve(xhr.response);
-                };
-
-                xhr.send(null);
-            });
-        },
-
-        loadBinaries(urls) {
-            return Promise.all(urls.map(url => this.loadBinary(url)));
         }
     }
 
