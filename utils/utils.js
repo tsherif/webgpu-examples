@@ -44,6 +44,23 @@
     let textureDataCtx = textureDataCanvas.getContext("2d");
 
     window.utils = {
+        checkSupport() {
+            if (!navigator.gpu) {
+                document.body.innerHTML = `
+                    <h1>WebGPU not supported!</h1>
+                    <div>
+                        SPIR-V WebGPU is currently only supported in <a href="https://www.google.com/chrome/canary/">Chrome Canary</a>
+                        behind the flag "enable-unsafe-webgpu".
+                    </div>
+                    <div>
+                        See the <a href="https://github.com/gpuweb/gpuweb/wiki/Implementation-Status">Implementation Status</a> page for more details.
+                    </div>
+                `;
+
+                throw new Error("WebGPU not supported");
+            }
+        },
+
         addDescription(title, description, url) {
             title = `WebGPU Example: ${title}`;
 
