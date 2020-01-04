@@ -38,9 +38,21 @@ utils.addDescription(
 );
 
 (async () => {
-    const adapter = await navigator.gpu.requestAdapter();
+    //////////////////////////////////////////
+    // Set up WebGPU adapter and load glslang
+    // to compile GLSL to SPIR-V
+    //////////////////////////////////////////
+
+    const [adapter, glslang] = await Promise.all([
+        navigator.gpu.requestAdapter(),
+        import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
+    ]);
+
+    ///////////////////////////////////////
+    // Set up device and canvas swap chain
+    ///////////////////////////////////////
+
     const device = await adapter.requestDevice();
-    const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
     
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -52,6 +64,36 @@ utils.addDescription(
         device,
         format: swapChainFormat
     });
+
+    ////////////////////////////////////////
+    // Create vertex buffers and load data
+    ////////////////////////////////////////
+
+    const [positionBuffer, positionBufferMap] = device.createBufferMapped({
+        size: 24,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    new Float32Array(positionBufferMap).set([
+        -0.5, -0.5,
+        0.5, -0.5,
+        0.0, 0.5
+    ]);
+    positionBuffer.unmap();
+
+    const [colorBuffer, colorBufferMap] = device.createBufferMapped({
+        size: 12,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    new Uint8Array(colorBufferMap).set([
+        255, 0, 0, 255,
+        0, 255, 0, 255,
+        0, 0, 255, 255
+    ]);
+    colorBuffer.unmap();
+
+    ///////////////////////////
+    // Create render pipeline
+    ///////////////////////////
 
     const vs = `
     #version 450
@@ -118,27 +160,9 @@ utils.addDescription(
         }]
     });
 
-    const [positionBuffer, positionBufferMap] = device.createBufferMapped({
-        size: 24,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-    new Float32Array(positionBufferMap).set([
-        -0.5, -0.5,
-        0.5, -0.5,
-        0.0, 0.5
-    ]);
-    positionBuffer.unmap();
-
-    const [colorBuffer, colorBufferMap] = device.createBufferMapped({
-        size: 12,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-    new Uint8Array(colorBufferMap).set([
-        255, 0, 0, 255,
-        0, 255, 0, 255,
-        0, 0, 255, 255
-    ]);
-    colorBuffer.unmap();
+    ////////////////////////////////////
+    // Create and submit command buffer
+    ////////////////////////////////////
 
     const commandEncoder = device.createCommandEncoder();
     const textureView = swapChain.getCurrentTexture().createView();
@@ -150,8 +174,12 @@ utils.addDescription(
         }]
     });
     renderPass.setPipeline(pipeline);
+
+    // First argument here refers to array index
+    // in pipeline vertexState.vertexBuffers
     renderPass.setVertexBuffer(0, positionBuffer);
     renderPass.setVertexBuffer(1, colorBuffer);
+    
     renderPass.draw(3, 1, 0, 0);
     renderPass.endPass();
 

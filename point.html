@@ -38,10 +38,23 @@ utils.addDescription(
 );
 
 (async () => {
-    const adapter = await navigator.gpu.requestAdapter();
+
+    //////////////////////////////////////////
+    // Set up WebGPU adapter and load glslang
+    // to compile GLSL to SPIR-V
+    //////////////////////////////////////////
+
+    const [adapter, glslang] = await Promise.all([
+        navigator.gpu.requestAdapter(),
+        import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
+    ]);
+
+    ///////////////////////////////////////
+    // Set up device and canvas swap chain
+    ///////////////////////////////////////
+
     const device = await adapter.requestDevice();
-    const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
-    
+
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -52,6 +65,10 @@ utils.addDescription(
         device,
         format: swapChainFormat
     });
+
+    /////////////////////////////////////////////////
+    // Create render pipeline to draw a single point
+    /////////////////////////////////////////////////
 
     const vs = `
     #version 450
@@ -89,6 +106,10 @@ utils.addDescription(
             format: swapChainFormat
         }]
     });
+
+    ////////////////////////////////////
+    // Create and submit command buffer
+    ////////////////////////////////////
 
     const commandEncoder = device.createCommandEncoder();
     const textureView = swapChain.getCurrentTexture().createView();

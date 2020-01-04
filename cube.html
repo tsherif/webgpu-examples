@@ -39,9 +39,21 @@ utils.addDescription(
 );
 
 (async () => {
-    const adapter = await navigator.gpu.requestAdapter();
+    //////////////////////////////////////////
+    // Set up WebGPU adapter and load glslang
+    // to compile GLSL to SPIR-V
+    //////////////////////////////////////////
+
+    const [adapter, glslang] = await Promise.all([
+        navigator.gpu.requestAdapter(),
+        import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
+    ]);
+
+    ///////////////////////////////////////
+    // Set up device and canvas swap chain
+    ///////////////////////////////////////
+
     const device = await adapter.requestDevice();
-    const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
     
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -53,6 +65,72 @@ utils.addDescription(
         device,
         format: swapChainFormat
     });
+
+    ////////////////////////////////////////
+    // Create vertex buffers and load data
+    ////////////////////////////////////////
+
+    const cubeData = utils.createCube();
+    const numVertices = cubeData.positions.length / 3;
+
+    const positionBuffer = device.createBuffer({
+        size: cubeData.positions.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    const normalBuffer = device.createBuffer({
+        size: cubeData.normals.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+
+    positionBuffer.setSubData(0, cubeData.positions);
+    normalBuffer.setSubData(0, cubeData.normals);
+
+    /////////////////
+    // Uniform data
+    /////////////////
+
+    const projectionMatrix = mat4.create();
+    const viewMatrix = mat4.create();
+    const modelMatrix = mat4.create();
+    const viewProjectionMatrix = mat4.create();
+    const mvpMatrix = mat4.create();
+    const rotation = [0, 0, 0];
+
+    mat4.perspective(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
+    mat4.lookAt(viewMatrix, [1, 1, 1], [0, 0, 0], [0, 1, 0]);
+    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+    /////////////////////////////////////////////
+    // Create uniform buffers and binding layout
+    /////////////////////////////////////////////
+
+    const sceneUniformBuffer = device.createBuffer({
+        size: 64,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    const sceneUniformBindGroupLayout = device.createBindGroupLayout({
+        bindings: [{
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX,
+            type: "uniform-buffer"
+        }]
+    });
+
+
+    const sceneUniformBindGroup = device.createBindGroup({
+        layout: sceneUniformBindGroupLayout,
+        bindings: [{
+            binding: 0,
+            resource: {
+                buffer: sceneUniformBuffer
+            }
+        }]
+    });
+
+    ///////////////////////////
+    // Create render pipeline
+    ///////////////////////////
 
     const vs = `
     #version 450
@@ -83,14 +161,6 @@ utils.addDescription(
         fragColor = vec4(abs(vNormal), 1.0);
     } 
     `.trim();
-
-    const sceneUniformBindGroupLayout = device.createBindGroupLayout({
-        bindings: [{
-            binding: 0,
-            visibility: GPUShaderStage.VERTEX,
-            type: "uniform-buffer"
-        }]
-    });
 
     const pipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({bindGroupLayouts: [sceneUniformBindGroupLayout]}),
@@ -137,41 +207,15 @@ utils.addDescription(
         }]
     });
 
-    const cubeData = utils.createCube();
-    const numVertices = cubeData.positions.length / 3;
-
-    const positionBuffer = device.createBuffer({
-        size: cubeData.positions.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-    const normalBuffer = device.createBuffer({
-        size: cubeData.normals.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-
-    positionBuffer.setSubData(0, cubeData.positions);
-    normalBuffer.setSubData(0, cubeData.normals);
-
-    const sceneUniformBuffer = device.createBuffer({
-        size: 64,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    const sceneUniformBindGroup = device.createBindGroup({
-        layout: sceneUniformBindGroupLayout,
-        bindings: [{
-            binding: 0,
-            resource: {
-                buffer: sceneUniformBuffer
-            }
-        }]
-    });
+    ///////////////////////////
+    // Render pass description
+    ///////////////////////////
 
     const depthTexture = device.createTexture({
         size: [canvas.width, canvas.height, 1],
         format: "depth24plus",
         usage:  GPUTextureUsage.OUTPUT_ATTACHMENT
-    })
+    });
 
     const renderPassDescription = {
         colorAttachments: [{
@@ -187,19 +231,11 @@ utils.addDescription(
         }
     };
 
-    const projectionMatrix = mat4.create();
-    const viewMatrix = mat4.create();
-    const modelMatrix = mat4.create();
-    const viewProjectionMatrix = mat4.create();
-    const mvpMatrix = mat4.create();
-
-    mat4.perspective(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
-    mat4.lookAt(viewMatrix, [1, 1, 1], [0, 0, 0], [0, 1, 0]);
-    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
-
-    const rotation = [0, 0, 0];
-
     requestAnimationFrame(function draw() {
+        /////////////////////////
+        // Update uniform buffer
+        /////////////////////////
+
         rotation[0] += 0.01;
         rotation[1] += 0.01;
         utils.xformMatrix(modelMatrix, null, rotation, null);
@@ -207,15 +243,30 @@ utils.addDescription(
         
         sceneUniformBuffer.setSubData(0, mvpMatrix);
 
+        ////////////////////
+        // Swap framebuffer
+        ////////////////////
+
         renderPassDescription.colorAttachments[0].attachment = swapChain.getCurrentTexture().createView();
+
+        ////////////////////////////////////
+        // Create and submit command buffer
+        ////////////////////////////////////
 
         const commandEncoder = device.createCommandEncoder();
         const renderPass = commandEncoder.beginRenderPass(renderPassDescription);
 
         renderPass.setPipeline(pipeline);
+
+        // First argument here refers to array index
+        // in pipeline vertexState.vertexBuffers
         renderPass.setVertexBuffer(0, positionBuffer);
         renderPass.setVertexBuffer(1, normalBuffer);
+
+        // First argument here refers to array index
+        // in pipeline layout.bindGroupLayouts
         renderPass.setBindGroup(0, sceneUniformBindGroup);
+        
         renderPass.draw(numVertices, 1, 0, 0);
         renderPass.endPass();
 

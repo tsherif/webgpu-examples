@@ -38,6 +38,10 @@ utils.addDescription(
 );
 
 (async () => {
+    ///////////////////////////////////////
+    // Set up device and canvas swap chain
+    ///////////////////////////////////////
+
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
     
@@ -51,6 +55,10 @@ utils.addDescription(
         device,
         format: swapChainFormat
     });
+
+    ////////////////////////////////////
+    // Create and submit command buffer
+    ////////////////////////////////////
 
     const commandEncoder = device.createCommandEncoder();
     const textureView = swapChain.getCurrentTexture().createView();

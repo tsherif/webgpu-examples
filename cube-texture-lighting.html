@@ -39,13 +39,46 @@ utils.addDescription(
 );
 
 (async () => {
-    const adapter = await navigator.gpu.requestAdapter();
-    const device = await adapter.requestDevice();
-    const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
+    //////////////////////////////////////////
+    // Set up WebGPU adapter, load glslang
+    // to compile GLSL to SPIR-V, load
+    // texture image
+    //////////////////////////////////////////
 
     const img = document.createElement("img");
     img.src = "img/marble.png";
-    await img.decode();
+
+    const [adapter, glslang] = await Promise.all([
+        navigator.gpu.requestAdapter(),
+        import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default()),
+        img.decode()
+    ]);
+
+    ///////////////////////////////////////
+    // Set up device and canvas swap chain
+    ///////////////////////////////////////
+
+    const device = await adapter.requestDevice();
+    
+    const canvas = document.getElementById("webgpu-canvas");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const context = canvas.getContext("gpupresent");
+    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
+    const swapChain = context.configureSwapChain({
+        device,
+        format: swapChainFormat
+    });
+
+    /////////////////////////////////////////
+    // Create texture, sampler and load data
+    /////////////////////////////////////////
+
+    const sampler = device.createSampler({
+        minFilter: "linear",
+        magFilter: "linear"
+    });
 
     const textureData = utils.getImageData(img);
     const textureDataBuffer = device.createBuffer({
@@ -75,22 +108,123 @@ utils.addDescription(
     ]);
 
     device.defaultQueue.submit([textureLoadEncoder.finish()]);
-
-    const sampler = device.createSampler({
-        minFilter: "linear",
-        magFilter: "linear"
-    });
     
-    const canvas = document.getElementById("webgpu-canvas");
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    ////////////////////////////////////////
+    // Create vertex buffers and load data
+    ////////////////////////////////////////
 
-    const context = canvas.getContext("gpupresent");
-    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
-    const swapChain = context.configureSwapChain({
-        device,
-        format: swapChainFormat
+    const cubeData = utils.createCube();
+    const numVertices = cubeData.positions.length / 3;
+
+    const positionBuffer = device.createBuffer({
+        size: cubeData.positions.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
+    const normalBuffer = device.createBuffer({
+        size: cubeData.normals.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    const uvBuffer = device.createBuffer({
+        size: cubeData.uvs.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+
+
+    positionBuffer.setSubData(0, cubeData.positions);
+    normalBuffer.setSubData(0, cubeData.normals);
+    uvBuffer.setSubData(0, cubeData.uvs);
+
+    /////////////////
+    // Uniform data
+    /////////////////
+
+    const eyePosition = new Float32Array([1, 1, 1]);
+    const lightPosition = new Float32Array([1, 1, 1]);
+
+    const projectionMatrix = mat4.create();
+    const viewMatrix = mat4.create();
+    const modelMatrix = mat4.create();
+    const viewProjectionMatrix = mat4.create();
+    const mvpMatrix = mat4.create();
+    const rotation = [0, 0, 0];
+
+    mat4.perspective(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
+    mat4.lookAt(viewMatrix, [1, 1, 1], [0, 0, 0], [0, 1, 0]);
+    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+    /////////////////////////////////////////////
+    // Create uniform buffers and binding layout
+    /////////////////////////////////////////////
+
+    const vertexUniformBuffer = device.createBuffer({
+        size: 128,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    const fragmentUniformBuffer = device.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    vertexUniformBuffer.setSubData(64, viewProjectionMatrix);
+    fragmentUniformBuffer.setSubData(0, eyePosition);
+    fragmentUniformBuffer.setSubData(16, lightPosition);
+
+    const sceneUniformBindGroupLayout = device.createBindGroupLayout({
+        bindings: [
+            {
+                binding: 0,
+                visibility: GPUShaderStage.VERTEX,
+                type: "uniform-buffer"
+            },
+            {
+                binding: 1,
+                visibility: GPUShaderStage.FRAGMENT,
+                type: "uniform-buffer"
+            },
+            {
+                binding: 2,
+                visibility: GPUShaderStage.FRAGMENT,
+                type: "sampler"
+            },
+            {
+                binding: 3,
+                visibility: GPUShaderStage.FRAGMENT,
+                type: "sampled-texture"
+            }
+        ]
+    });
+
+    const sceneUniformBindGroup = device.createBindGroup({
+        layout: sceneUniformBindGroupLayout,
+        bindings: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: vertexUniformBuffer
+                }
+            },
+            {
+                binding: 1,
+                resource: {
+                    buffer: fragmentUniformBuffer
+                }
+            },
+            {
+                binding: 2,
+                resource: sampler
+            },
+            {
+                binding: 3,
+                resource: texture.createView()
+            }
+
+        ]
+    });
+
+    ///////////////////////////
+    // Create render pipeline
+    ///////////////////////////
 
     const vs = `
     #version 450
@@ -148,31 +282,6 @@ utils.addDescription(
     } 
     `.trim();
 
-    const sceneUniformBindGroupLayout = device.createBindGroupLayout({
-        bindings: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX,
-                type: "uniform-buffer"
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.FRAGMENT,
-                type: "uniform-buffer"
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.FRAGMENT,
-                type: "sampler"
-            },
-            {
-                binding: 3,
-                visibility: GPUShaderStage.FRAGMENT,
-                type: "sampled-texture"
-            }
-        ]
-    });
-
     const pipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({bindGroupLayouts: [sceneUniformBindGroupLayout]}),
         vertexStage: {
@@ -226,64 +335,10 @@ utils.addDescription(
         }]
     });
 
-    const cubeData = utils.createCube();
-    const numVertices = cubeData.positions.length / 3;
-
-    const positionBuffer = device.createBuffer({
-        size: cubeData.positions.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-    const normalBuffer = device.createBuffer({
-        size: cubeData.normals.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-    const uvBuffer = device.createBuffer({
-        size: cubeData.uvs.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-
-
-    positionBuffer.setSubData(0, cubeData.positions);
-    normalBuffer.setSubData(0, cubeData.normals);
-    uvBuffer.setSubData(0, cubeData.uvs);
-
-    const vertexUniformBuffer = device.createBuffer({
-        size: 128,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    const fragmentUniformBuffer = device.createBuffer({
-        size: 32,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    const sceneUniformBindGroup = device.createBindGroup({
-        layout: sceneUniformBindGroupLayout,
-        bindings: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: vertexUniformBuffer
-                }
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: fragmentUniformBuffer
-                }
-            },
-            {
-                binding: 2,
-                resource: sampler
-            },
-            {
-                binding: 3,
-                resource: texture.createView()
-            }
-
-        ]
-    });
-
+    ///////////////////////////
+    // Render pass description
+    ///////////////////////////
+    
     const depthTexture = device.createTexture({
         size: [canvas.width, canvas.height, 1],
         format: "depth24plus",
@@ -304,33 +359,20 @@ utils.addDescription(
         }
     };
 
-
-    const eyePosition = new Float32Array([1, 1, 1]);
-    const lightPosition = new Float32Array([1, 1, 1]);
-
-    fragmentUniformBuffer.setSubData(0, eyePosition);
-    fragmentUniformBuffer.setSubData(16, lightPosition);
-
-    const projectionMatrix = mat4.create();
-    const viewMatrix = mat4.create();
-    const modelMatrix = mat4.create();
-    const viewProjectionMatrix = mat4.create();
-    const mvpMatrix = mat4.create();
-
-    mat4.perspective(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
-    mat4.lookAt(viewMatrix, [1, 1, 1], [0, 0, 0], [0, 1, 0]);
-    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
-
-    vertexUniformBuffer.setSubData(64, viewProjectionMatrix);
-
-    const rotation = [0, 0, 0];
-
     requestAnimationFrame(function draw() {
+        /////////////////////////
+        // Update uniform buffer
+        /////////////////////////
+        
         rotation[0] += 0.01;
         rotation[2] += 0.005;
         utils.xformMatrix(modelMatrix, null, rotation, null);
         
         vertexUniformBuffer.setSubData(0, modelMatrix);
+
+        ////////////////////
+        // Swap framebuffer
+        ////////////////////
 
         renderPassDescription.colorAttachments[0].attachment = swapChain.getCurrentTexture().createView();
 
@@ -338,10 +380,17 @@ utils.addDescription(
         const renderPass = commandEncoder.beginRenderPass(renderPassDescription);
 
         renderPass.setPipeline(pipeline);
+
+        // First argument here refers to array index
+        // in pipeline vertexState.vertexBuffers
         renderPass.setVertexBuffer(0, positionBuffer);
         renderPass.setVertexBuffer(1, normalBuffer);
         renderPass.setVertexBuffer(2, uvBuffer);
+
+        // First argument here refers to array index
+        // in pipeline layout.bindGroupLayouts
         renderPass.setBindGroup(0, sceneUniformBindGroup);
+        
         renderPass.draw(numVertices, 1, 0, 0);
         renderPass.endPass();
 
