@@ -53,6 +53,7 @@
 
             const descriptionElement = document.createElement("div");
             descriptionElement.id = "description";
+            descriptionElement.style.width = "400px";
             descriptionElement.innerHTML = `
                 <h2>${title}</h2>
                 <div>${description}</div>

@@ -1,17 +1,18 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebGPU Triangle</title>
-    <style>
-        html, body {
-            margin: 0;
-            overflow: hidden;
-        }
-    </style>
+    <link rel="stylesheet" href="css/example.css">
+    <script src="utils/utils.js"></script>
 </head>
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <script>
+utils.addDescription(
+    "Triangle",
+    "Creating mapped buffers, loading vertex data, and drawing a triangle.",
+    "triangle.html"
+);
+
 (async () => {
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();

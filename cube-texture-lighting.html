@@ -1,26 +1,26 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebGPU Textured, Lit Cube</title>
-    <style>
-        html, body {
-            margin: 0;
-            overflow: hidden;
-        }
-    </style>
+    <link rel="stylesheet" href="css/example.css">
     <script src="utils/gl-matrix.js"></script>
     <script src="utils/utils.js"></script>
 </head>
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <script>
+utils.addDescription(
+    "Textured, Lit Cube",
+    "Creating a texture from a DOM image, setting up vertex and uniform buffers, and animating a cube.",
+    "cube-texture-lighting.html"
+);
+
 (async () => {
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
     const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
 
     const img = document.createElement("img");
-    img.src = "img/pavement.jpg";
+    img.src = "img/marble.png";
     await img.decode();
 
     const textureData = utils.getImageData(img);

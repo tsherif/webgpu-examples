@@ -1,21 +1,22 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebGPU Particles</title>
-    <style>
-        html, body {
-            margin: 0;
-            overflow: hidden;
-        }
-    </style>
+    <link rel="stylesheet" href="css/example.css">
+    <script src="utils/utils.js"></script>
 </head>
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <script>
-(async () => {
-    const NUM_PARTICLES = 50000;
-    const PARTICLE_SIZE = 2;
+const NUM_PARTICLES = 50000;
+const PARTICLE_SIZE = 2;
 
+utils.addDescription(
+    "Particles",
+    `Using a compute shader to simulate gravity on ${NUM_PARTICLES} instanced quad particles.`,
+    "particles.html"
+);
+
+(async () => {
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
     const glslang = await import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default());
