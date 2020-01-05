@@ -50,7 +50,7 @@
                     <h1>WebGPU not supported!</h1>
                     <div>
                         SPIR-V WebGPU is currently only supported in <a href="https://www.google.com/chrome/canary/">Chrome Canary</a>
-                        behind the flag "enable-unsafe-webgpu".
+                        with the flag "enable-unsafe-webgpu" enabled.
                     </div>
                     <div>
                         See the <a href="https://github.com/gpuweb/gpuweb/wiki/Implementation-Status">Implementation Status</a> page for more details.
@@ -74,7 +74,7 @@
             descriptionElement.innerHTML = `
                 <h2>${title}</h2>
                 <div>${description}</div>
-                <div><a href="https://github.com/tsherif/webgpu-examples/blob/master/${url}">Source Code</a></div>
+                <div><a href="https://github.com/tsherif/webgpu-examples/blob/gh-pages/${url}">Source Code</a></div>
             `;
             document.body.appendChild(descriptionElement);
         },
