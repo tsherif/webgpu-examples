@@ -12,5 +12,5 @@ Small examples of SPIR-V compatible WebGPU usage.
 
 Examples currently only run in [Chrome Canary](https://www.google.com/chrome/canary/) with the `enable-unsafe-webgpu` flag enabled. See the [Implementation Status](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status) page for updates on support. 
 
-All examples are implemented as simple HTML pages and can be run locally by simply running a local development server, e.g. `python -m SimpleHTTPServer`.
+All examples are implemented as simple HTML pages and can thus be run locally by serving them from a local HTTP server, e.g. `python -m SimpleHTTPServer`.
 
