@@ -82,8 +82,8 @@ utils.addDescription(
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
-    positionBuffer.setSubData(0, cubeData.positions);
-    normalBuffer.setSubData(0, cubeData.normals);
+    device.defaultQueue.writeBuffer(positionBuffer, 0, cubeData.positions);
+    device.defaultQueue.writeBuffer(normalBuffer, 0, cubeData.normals);
 
     /////////////////
     // Uniform data
@@ -110,7 +110,7 @@ utils.addDescription(
     });
 
     const sceneUniformBindGroupLayout = device.createBindGroupLayout({
-        bindings: [{
+        entries: [{
             binding: 0,
             visibility: GPUShaderStage.VERTEX,
             type: "uniform-buffer"
@@ -120,7 +120,7 @@ utils.addDescription(
 
     const sceneUniformBindGroup = device.createBindGroup({
         layout: sceneUniformBindGroupLayout,
-        bindings: [{
+        entries: [{
             binding: 0,
             resource: {
                 buffer: sceneUniformBuffer
@@ -241,7 +241,7 @@ utils.addDescription(
         utils.xformMatrix(modelMatrix, null, rotation, null);
         mat4.multiply(mvpMatrix, viewProjectionMatrix, modelMatrix);
         
-        sceneUniformBuffer.setSubData(0, mvpMatrix);
+        device.defaultQueue.writeBuffer(sceneUniformBuffer, 0, mvpMatrix);
 
         ////////////////////
         // Swap framebuffer

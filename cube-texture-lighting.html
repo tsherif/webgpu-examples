@@ -86,7 +86,7 @@ utils.addDescription(
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
 
-    textureDataBuffer.setSubData(0, textureData);
+    device.defaultQueue.writeBuffer(textureDataBuffer, 0, textureData)
 
     const texture = device.createTexture({
         size: [img.width, img.height, 1],
@@ -97,7 +97,7 @@ utils.addDescription(
     const textureLoadEncoder = device.createCommandEncoder();
     textureLoadEncoder.copyBufferToTexture({
         buffer: textureDataBuffer,
-        rowPitch: img.width * 4,
+        bytesPerRow: img.width * 4,
         imageHeight: img.height
     }, {
         texture,
@@ -129,10 +129,9 @@ utils.addDescription(
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
-
-    positionBuffer.setSubData(0, cubeData.positions);
-    normalBuffer.setSubData(0, cubeData.normals);
-    uvBuffer.setSubData(0, cubeData.uvs);
+    device.defaultQueue.writeBuffer(positionBuffer, 0, cubeData.positions);
+    device.defaultQueue.writeBuffer(normalBuffer, 0, cubeData.normals);
+    device.defaultQueue.writeBuffer(uvBuffer, 0, cubeData.uvs);
 
     /////////////////
     // Uniform data
@@ -166,12 +165,12 @@ utils.addDescription(
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    vertexUniformBuffer.setSubData(64, viewProjectionMatrix);
-    fragmentUniformBuffer.setSubData(0, eyePosition);
-    fragmentUniformBuffer.setSubData(16, lightPosition);
+    device.defaultQueue.writeBuffer(vertexUniformBuffer, 64, viewProjectionMatrix);
+    device.defaultQueue.writeBuffer(fragmentUniformBuffer, 0, eyePosition);
+    device.defaultQueue.writeBuffer(fragmentUniformBuffer, 16, lightPosition);
 
     const sceneUniformBindGroupLayout = device.createBindGroupLayout({
-        bindings: [
+        entries: [
             {
                 binding: 0,
                 visibility: GPUShaderStage.VERTEX,
@@ -197,7 +196,7 @@ utils.addDescription(
 
     const sceneUniformBindGroup = device.createBindGroup({
         layout: sceneUniformBindGroupLayout,
-        bindings: [
+        entries: [
             {
                 binding: 0,
                 resource: {
@@ -368,7 +367,7 @@ utils.addDescription(
         rotation[2] += 0.005;
         utils.xformMatrix(modelMatrix, null, rotation, null);
         
-        vertexUniformBuffer.setSubData(0, modelMatrix);
+        device.defaultQueue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);
 
         ////////////////////
         // Swap framebuffer
