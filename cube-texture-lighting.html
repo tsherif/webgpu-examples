@@ -80,34 +80,23 @@ utils.addDescription(
         magFilter: "linear"
     });
 
-    const textureData = utils.getImageData(img);
-    const textureDataBuffer = device.createBuffer({
-        size: textureData.byteLength,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-    });
-
-    device.defaultQueue.writeBuffer(textureDataBuffer, 0, textureData)
-
     const texture = device.createTexture({
         size: [img.width, img.height, 1],
         format: "rgba8unorm",
         usage: GPUTextureUsage.SAMPLED | GPUTextureUsage.COPY_DST
     });
 
-    const textureLoadEncoder = device.createCommandEncoder();
-    textureLoadEncoder.copyBufferToTexture({
-        buffer: textureDataBuffer,
-        bytesPerRow: img.width * 4,
-        imageHeight: img.height
-    }, {
-        texture,
-    }, [
-        img.width, 
-        img.height, 
-        1
-    ]);
-
-    device.defaultQueue.submit([textureLoadEncoder.finish()]);
+    const textureData = utils.getImageData(img);
+    device.defaultQueue.writeTexture(
+        { texture },
+        textureData,
+        { bytesPerRow: img.width * 4 },
+        [
+            img.width, 
+            img.height, 
+            1
+        ]
+    );
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
