@@ -87,16 +87,42 @@ utils.addDescription(
     });
 
     const textureData = utils.getImageData(img);
-    device.defaultQueue.writeTexture(
-        { texture },
-        textureData,
-        { bytesPerRow: img.width * 4 },
-        [
+
+    if (typeof device.defaultQueue.writeTexture === "function") {
+        device.defaultQueue.writeTexture(
+            { texture },
+            textureData,
+            { bytesPerRow: img.width * 4 },
+            [
+                img.width, 
+                img.height, 
+                1
+            ]
+        );
+    } else {
+        // NOTE: Fallback until Queue.writeTexture is implemented.
+        const textureDataBuffer = device.createBuffer({
+            size: textureData.byteLength,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+        });
+
+        device.defaultQueue.writeBuffer(textureDataBuffer, 0, textureData);
+
+        const textureLoadEncoder = device.createCommandEncoder();
+        textureLoadEncoder.copyBufferToTexture({
+            buffer: textureDataBuffer,
+            bytesPerRow: img.width * 4,
+            imageHeight: img.height
+        }, {
+            texture,
+        }, [
             img.width, 
             img.height, 
             1
-        ]
-    );
+        ]);
+
+        device.defaultQueue.submit([textureLoadEncoder.finish()]);
+    }
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
