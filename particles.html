@@ -52,9 +52,9 @@ utils.addDescription(
         import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
     ]);
 
-    ///////////////////////////////////////
-    // Set up device and canvas swap chain
-    ///////////////////////////////////////
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
 
     const device = await adapter.requestDevice();
     
@@ -63,10 +63,10 @@ utils.addDescription(
     canvas.height = window.innerHeight;
 
     const context = canvas.getContext("webgpu");
-    const swapChainFormat = await context.getPreferredFormat(adapter);
-    const swapChain = context.configure({
+    const presentationFormat = await context.getPreferredFormat(adapter);
+    context.configure({
         device,
-        format: swapChainFormat
+        format: presentationFormat
     });
 
     ////////////////////////////////////////////////////////
@@ -458,7 +458,7 @@ utils.addDescription(
             }),
             entryPoint: "main",
             targets: [{
-                format: swapChainFormat,
+                format: presentationFormat,
                 colorBlend: {
                     srcFactor: "one",
                     dstFactor: "one-minus-src-alpha"

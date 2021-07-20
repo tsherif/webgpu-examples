@@ -38,9 +38,9 @@ utils.addDescription(
 );
 
 (async () => {
-    ///////////////////////////////////////
-    // Set up device and canvas swap chain
-    ///////////////////////////////////////
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
 
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
@@ -50,10 +50,10 @@ utils.addDescription(
     canvas.height = window.innerHeight;
 
     const context = canvas.getContext("webgpu");
-    const swapChainFormat = context.getPreferredFormat(adapter);
-    const swapChain = context.configure({
+    const presentationFormat = context.getPreferredFormat(adapter);
+    context.configure({
         device,
-        format: swapChainFormat
+        format: presentationFormat
     });
 
     ////////////////////////////////////
