@@ -58,9 +58,9 @@ utils.addDescription(
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const context = canvas.getContext("gpupresent");
-    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
-    const swapChain = context.configureSwapChain({
+    const context = canvas.getContext("webgpu");
+    const swapChainFormat = context.getPreferredFormat(adapter);
+    const swapChain = context.configure({
         device,
         format: swapChainFormat
     });
@@ -69,22 +69,24 @@ utils.addDescription(
     // Create vertex buffers and load data
     ////////////////////////////////////////
 
-    const [positionBuffer, positionBufferMap] = device.createBufferMapped({
+    const positionBuffer = device.createBuffer({
         size: 24,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true
     });
-    new Float32Array(positionBufferMap).set([
+    new Float32Array(positionBuffer.getMappedRange()).set([
         -0.5, -0.5,
         0.5, -0.5,
         0.0, 0.5
     ]);
     positionBuffer.unmap();
 
-    const [colorBuffer, colorBufferMap] = device.createBufferMapped({
+    const colorBuffer = device.createBuffer({
         size: 12,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true
     });
-    new Uint8Array(colorBufferMap).set([
+    new Uint8Array(colorBuffer.getMappedRange()).set([
         255, 0, 0, 255,
         0, 255, 0, 255,
         0, 0, 255, 255
@@ -122,26 +124,17 @@ utils.addDescription(
     `.trim();
 
     const pipeline = device.createRenderPipeline({
-        vertexStage: {
+        vertex: {
             module: device.createShaderModule({
                 code: glslang.compileGLSL(vs, "vertex")
             }),
-            entryPoint: "main"
-        },
-        fragmentStage: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main"
-        },
-        primitiveTopology: "triangle-list",
-        vertexState: {
-            vertexBuffers: [
+            entryPoint: "main",
+            buffers: [
                 {
                     arrayStride: 8,
                     attributes: [{
                         shaderLocation: 0,
-                        format: "float2",
+                        format: "float32x2",
                         offset: 0
                     }]
                 },
@@ -149,15 +142,24 @@ utils.addDescription(
                     arrayStride: 4,
                     attributes: [{
                         shaderLocation: 1,
-                        format: "uchar4norm",
+                        format: "unorm8x4",
                         offset: 0
                     }]
                 }
             ]
         },
-        colorStates: [{
-            format: swapChainFormat
-        }]
+        fragment: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(fs, "fragment")
+            }),
+            entryPoint: "main",
+            targets: [{
+                format: swapChainFormat
+            }]
+        },
+        primitive: {
+            topology: "triangle-list"
+        }
     });
 
     ////////////////////////////////////
@@ -165,11 +167,11 @@ utils.addDescription(
     ////////////////////////////////////
 
     const commandEncoder = device.createCommandEncoder();
-    const textureView = swapChain.getCurrentTexture().createView();
+    const textureView = context.getCurrentTexture().createView();
 
     const renderPass = commandEncoder.beginRenderPass({
         colorAttachments: [{
-            attachment: textureView,
+            view: textureView,
             loadValue: [0, 0, 0, 1]
         }]
     });
@@ -183,7 +185,7 @@ utils.addDescription(
     renderPass.draw(3, 1, 0, 0);
     renderPass.endPass();
 
-    device.defaultQueue.submit([commandEncoder.finish()]);
+    device.queue.submit([commandEncoder.finish()]);
 })();
 </script>
 </body>
