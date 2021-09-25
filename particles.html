@@ -331,7 +331,7 @@ utils.addDescription(
         velocity *= 0.9999;
 
         positionsOut[index] = vec4(position + velocity, 1);
-        velocityOut[index] = vec4(velocity, 1);
+        velocityOut[index] = vec4(velocity, 0);
     }
 
     `.trim();

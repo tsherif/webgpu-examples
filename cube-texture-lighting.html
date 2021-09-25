@@ -83,7 +83,7 @@ utils.addDescription(
     const texture = device.createTexture({
         size: [img.width, img.height, 1],
         format: "rgba8unorm",
-        usage: GPUTextureUsage.SAMPLED | GPUTextureUsage.COPY_DST
+        usage: GPUTextureUsage.SAMPLED | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
     });
 
     const textureData = utils.getImageData(img);
