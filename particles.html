@@ -52,9 +52,9 @@ utils.addDescription(
         import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
     ]);
 
-    ///////////////////////////////////////
-    // Set up device and canvas swap chain
-    ///////////////////////////////////////
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
 
     const device = await adapter.requestDevice();
     
@@ -62,11 +62,11 @@ utils.addDescription(
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const context = canvas.getContext("gpupresent");
-    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
-    const swapChain = context.configureSwapChain({
+    const context = canvas.getContext("webgpu");
+    const presentationFormat = await context.getPreferredFormat(adapter);
+    context.configure({
         device,
-        format: swapChainFormat
+        format: presentationFormat
     });
 
     ////////////////////////////////////////////////////////
@@ -74,11 +74,12 @@ utils.addDescription(
     // (input/output pair of position and velocity buffers)
     ////////////////////////////////////////////////////////
 
-    const [positionBufferA, positionBufferMap] = device.createBufferMapped({
+    const positionBufferA = device.createBuffer({
         size: 16 * NUM_PARTICLES,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
+        mappedAtCreation: true
     });
-    const positionBufferData = new Float32Array(positionBufferMap);
+    const positionBufferData = new Float32Array(positionBufferA.getMappedRange());
     for (let i = 0; i < positionBufferData.length; i += 4) {
         positionBufferData[i]     = Math.random() * 2 - 1;
         positionBufferData[i + 1] = Math.random() * 2 - 1;
@@ -87,11 +88,12 @@ utils.addDescription(
     }
     positionBufferA.unmap();
 
-    const [velocityBufferA, velocityBufferMap] = device.createBufferMapped({
+    const velocityBufferA = device.createBuffer({
         size: 16 * NUM_PARTICLES,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
+        mappedAtCreation: true
     });
-    const velocityBufferData = new Float32Array(velocityBufferMap);
+    const velocityBufferData = new Float32Array(velocityBufferA.getMappedRange());
     for (let i = 0; i < velocityBufferData.length; i += 4) {
         velocityBufferData[i]     = Math.random() * 0.002 - 0.001;
         velocityBufferData[i + 1] = Math.random() * 0.002 - 0.001;
@@ -114,11 +116,12 @@ utils.addDescription(
     // Create buffers for render pass
     ///////////////////////////////////
 
-    const [vertexBuffer, vertexBufferMap] = device.createBufferMapped({
+    const vertexBuffer = device.createBuffer({
         size: 32,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true
     });
-    new Float32Array(vertexBufferMap).set([
+    new Float32Array(vertexBuffer.getMappedRange()).set([
         -1.0, -1.0,
         1.0, -1.0,
         -1.0, 1.0,
@@ -126,11 +129,12 @@ utils.addDescription(
     ]);
     vertexBuffer.unmap();
 
-    const [colorBuffer, colorBufferMap] = device.createBufferMapped({
+    const colorBuffer = device.createBuffer({
         size: 4 * NUM_PARTICLES,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true
     });
-    const colorBufferData = new Uint8Array(colorBufferMap);
+    const colorBufferData = new Uint8Array(colorBuffer.getMappedRange());
     for (let i = 0; i < colorBufferData.length; i += 4) {
         colorBufferData[i]     = Math.floor(Math.random() * 256);
         colorBufferData[i + 1] = Math.floor(Math.random() * 256);
@@ -155,7 +159,7 @@ utils.addDescription(
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    computeUniformBuffer.setSubData(0, computeUniformData);
+    device.queue.writeBuffer(computeUniformBuffer, 0, computeUniformData);
 
     //////////////////////////////////////////////////////////
     // Compute binding layouts 
@@ -168,27 +172,37 @@ utils.addDescription(
             {
                 binding: 0,
                 visibility: GPUShaderStage.COMPUTE,
-                type: "storage-buffer"
+                buffer: {
+                    type: "storage"
+                }
             },
             {
                 binding: 1,
                 visibility: GPUShaderStage.COMPUTE,
-                type: "storage-buffer"
+                buffer: {
+                    type: "storage"
+                }
             },
             {
                 binding: 2,
                 visibility: GPUShaderStage.COMPUTE,
-                type: "storage-buffer"
+                buffer: {
+                    type: "storage"
+                }
             },
             {
                 binding: 3,
                 visibility: GPUShaderStage.COMPUTE,
-                type: "storage-buffer"
+                buffer: {
+                    type: "storage"
+                }
             },
             {
                 binding: 4,
                 visibility: GPUShaderStage.COMPUTE,
-                type: "uniform-buffer"
+                buffer: {
+                    type: "uniform"
+                }
             }
         ]
     });
@@ -316,15 +330,15 @@ utils.addDescription(
         velocity += acceleration;
         velocity *= 0.9999;
 
-        positionsOut[index].xyz = position + velocity;
-        velocityOut[index].xyz = velocity;
+        positionsOut[index] = vec4(position + velocity, 1);
+        velocityOut[index] = vec4(velocity, 1);
     }
 
     `.trim();
 
     const computePipeline = device.createComputePipeline({
         layout: device.createPipelineLayout({bindGroupLayouts: [computeBindGroupLayout]}),
-        computeStage: {
+        compute: {
             module: device.createShaderModule({
                 code: glslang.compileGLSL(cs, "compute")
             }),
@@ -341,7 +355,7 @@ utils.addDescription(
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    vertexUniformBuffer.setSubData(0, new Float32Array([
+    device.queue.writeBuffer(vertexUniformBuffer, 0, new Float32Array([
         canvas.width, canvas.height, PARTICLE_SIZE
     ]));
 
@@ -349,7 +363,9 @@ utils.addDescription(
         entries: [{
             binding: 0,
             visibility: GPUShaderStage.VERTEX,
-            type: "uniform-buffer"
+            buffer: {
+                type: "uniform"
+            }
         }]
     });
 
@@ -402,26 +418,17 @@ utils.addDescription(
 
     const renderPipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({bindGroupLayouts: [vertexUniformBindGroupLayout]}),
-        vertexStage: {
+        vertex: {
             module: device.createShaderModule({
                 code: glslang.compileGLSL(vs, "vertex")
             }),
-            entryPoint: "main"
-        },
-        fragmentStage: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main"
-        },
-        primitiveTopology: "triangle-strip",
-        vertexState: {
-            vertexBuffers: [
+            entryPoint: "main",
+            buffers: [
                 {
                     arrayStride: 8,
                     attributes: [{
                         shaderLocation: 0,
-                        format: "float2",
+                        format: "float32x2",
                         offset: 0
                     }]
                 },
@@ -430,7 +437,7 @@ utils.addDescription(
                     stepMode: "instance",
                     attributes: [{
                         shaderLocation: 1,
-                        format: "uchar4norm",
+                        format: "unorm8x4",
                         offset: 0
                     }]
                 },
@@ -439,23 +446,33 @@ utils.addDescription(
                     stepMode: "instance",
                     attributes: [{
                         shaderLocation: 2,
-                        format: "float4",
+                        format: "float32x4",
                         offset: 0
                     }]
                 }
             ]
         },
-        colorStates: [{
-            format: swapChainFormat,
-            colorBlend: {
-                srcFactor: "one",
-                dstFactor: "one-minus-src-alpha"
-            },
-            alphaBlend: {
-                srcFactor: "one",
-                dstFactor: "one-minus-src-alpha"
-            }
-        }]
+        fragment: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(fs, "fragment")
+            }),
+            entryPoint: "main",
+            targets: [{
+                format: presentationFormat,
+                colorBlend: {
+                    srcFactor: "one",
+                    dstFactor: "one-minus-src-alpha"
+                },
+                alphaBlend: {
+                    srcFactor: "one",
+                    dstFactor: "one-minus-src-alpha"
+                }
+            }]
+        },
+        primitive: {
+            topology: "triangle-strip",
+            stripIndexFormat: "uint32"
+        }
     });
 
     ///////////////////////////
@@ -464,7 +481,7 @@ utils.addDescription(
 
     const renderPassDescriptor = {
         colorAttachments: [{
-            attachment: swapChain.getCurrentTexture().createView(),
+            view: context.getCurrentTexture().createView(),
             loadValue: [0, 0, 0, 1]
         }]
     };
@@ -502,7 +519,7 @@ utils.addDescription(
         // Swap framebuffer
         ////////////////////
 
-        renderPassDescriptor.colorAttachments[0].attachment = swapChain.getCurrentTexture().createView();
+        renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
 
         ///////////////////////
         // Encode render pass
@@ -528,7 +545,7 @@ utils.addDescription(
         // Submit command buffer
         //////////////////////////
 
-        device.defaultQueue.submit([commandEncoder.finish()]);
+        device.queue.submit([commandEncoder.finish()]);
     
         /////////////////
         // Swap buffers

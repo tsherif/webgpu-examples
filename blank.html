@@ -38,9 +38,9 @@ utils.addDescription(
 );
 
 (async () => {
-    ///////////////////////////////////////
-    // Set up device and canvas swap chain
-    ///////////////////////////////////////
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
 
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
@@ -49,11 +49,11 @@ utils.addDescription(
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const context = canvas.getContext("gpupresent");
-    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
-    const swapChain = context.configureSwapChain({
+    const context = canvas.getContext("webgpu");
+    const presentationFormat = context.getPreferredFormat(adapter);
+    context.configure({
         device,
-        format: swapChainFormat
+        format: presentationFormat
     });
 
     ////////////////////////////////////
@@ -61,17 +61,17 @@ utils.addDescription(
     ////////////////////////////////////
 
     const commandEncoder = device.createCommandEncoder();
-    const textureView = swapChain.getCurrentTexture().createView();
+    const textureView = context.getCurrentTexture().createView();
 
     const renderPass = commandEncoder.beginRenderPass({
         colorAttachments: [{
-            attachment: textureView,
+            view: textureView,
             loadValue: [0, 0, 0, 1]
         }]
     });
     renderPass.endPass();
 
-    device.defaultQueue.submit([commandEncoder.finish()]);
+    device.queue.submit([commandEncoder.finish()]);
 })();
 </script>
 </body>

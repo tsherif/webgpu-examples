@@ -54,9 +54,9 @@ utils.addDescription(
         img.decode()
     ]);
 
-    ///////////////////////////////////////
-    // Set up device and canvas swap chain
-    ///////////////////////////////////////
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
 
     const device = await adapter.requestDevice();
     
@@ -64,11 +64,11 @@ utils.addDescription(
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const context = canvas.getContext("gpupresent");
-    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
-    const swapChain = context.configureSwapChain({
+    const context = canvas.getContext("webgpu");
+    const presentationFormat = context.getPreferredFormat(adapter);
+    context.configure({
         device,
-        format: swapChainFormat
+        format: presentationFormat
     });
 
     /////////////////////////////////////////
@@ -88,8 +88,8 @@ utils.addDescription(
 
     const textureData = utils.getImageData(img);
 
-    if (typeof device.defaultQueue.writeTexture === "function") {
-        device.defaultQueue.writeTexture(
+    if (typeof device.queue.writeTexture === "function") {
+        device.queue.writeTexture(
             { texture },
             textureData,
             { bytesPerRow: img.width * 4 },
@@ -106,7 +106,7 @@ utils.addDescription(
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
         });
 
-        device.defaultQueue.writeBuffer(textureDataBuffer, 0, textureData);
+        device.queue.writeBuffer(textureDataBuffer, 0, textureData);
 
         const textureLoadEncoder = device.createCommandEncoder();
         textureLoadEncoder.copyBufferToTexture({
@@ -121,7 +121,7 @@ utils.addDescription(
             1
         ]);
 
-        device.defaultQueue.submit([textureLoadEncoder.finish()]);
+        device.queue.submit([textureLoadEncoder.finish()]);
     }
     
     ////////////////////////////////////////
@@ -144,9 +144,9 @@ utils.addDescription(
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
-    device.defaultQueue.writeBuffer(positionBuffer, 0, cubeData.positions);
-    device.defaultQueue.writeBuffer(normalBuffer, 0, cubeData.normals);
-    device.defaultQueue.writeBuffer(uvBuffer, 0, cubeData.uvs);
+    device.queue.writeBuffer(positionBuffer, 0, cubeData.positions);
+    device.queue.writeBuffer(normalBuffer, 0, cubeData.normals);
+    device.queue.writeBuffer(uvBuffer, 0, cubeData.uvs);
 
     /////////////////
     // Uniform data
@@ -180,31 +180,39 @@ utils.addDescription(
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    device.defaultQueue.writeBuffer(vertexUniformBuffer, 64, viewProjectionMatrix);
-    device.defaultQueue.writeBuffer(fragmentUniformBuffer, 0, eyePosition);
-    device.defaultQueue.writeBuffer(fragmentUniformBuffer, 16, lightPosition);
+    device.queue.writeBuffer(vertexUniformBuffer, 64, viewProjectionMatrix);
+    device.queue.writeBuffer(fragmentUniformBuffer, 0, eyePosition);
+    device.queue.writeBuffer(fragmentUniformBuffer, 16, lightPosition);
 
     const sceneUniformBindGroupLayout = device.createBindGroupLayout({
         entries: [
             {
                 binding: 0,
                 visibility: GPUShaderStage.VERTEX,
-                type: "uniform-buffer"
+                buffer: {
+                    type: "uniform"
+                }
             },
             {
                 binding: 1,
                 visibility: GPUShaderStage.FRAGMENT,
-                type: "uniform-buffer"
+                buffer: {
+                    type: "uniform"
+                }
             },
             {
                 binding: 2,
                 visibility: GPUShaderStage.FRAGMENT,
-                type: "sampler"
+                sampler: {
+                    type: "filtering"
+                }
             },
             {
                 binding: 3,
                 visibility: GPUShaderStage.FRAGMENT,
-                type: "sampled-texture"
+                texture: {
+                    sampleType: "float"
+                }
             }
         ]
     });
@@ -298,31 +306,17 @@ utils.addDescription(
 
     const pipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({bindGroupLayouts: [sceneUniformBindGroupLayout]}),
-        vertexStage: {
+        vertex: {
             module: device.createShaderModule({
                 code: glslang.compileGLSL(vs, "vertex")
             }),
-            entryPoint: "main"
-        },
-        fragmentStage: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main"
-        },
-        primitiveTopology: "triangle-list",
-        depthStencilState: {
-            format: "depth24plus",
-            depthWriteEnabled: true,
-            depthCompare: "less"
-        },
-        vertexState: {
-            vertexBuffers: [
+            entryPoint: "main",
+            buffers: [
                 {
                     arrayStride: 12,
                     attributes: [{
                         shaderLocation: 0,
-                        format: "float3",
+                        format: "float32x3",
                         offset: 0
                     }]
                 },
@@ -330,7 +324,7 @@ utils.addDescription(
                     arrayStride: 12,
                     attributes: [{
                         shaderLocation: 1,
-                        format: "float3",
+                        format: "float32x3",
                         offset: 0
                     }]
                 },
@@ -338,15 +332,29 @@ utils.addDescription(
                     arrayStride: 8,
                     attributes: [{
                         shaderLocation: 2,
-                        format: "float2",
+                        format: "float32x2",
                         offset: 0
                     }]
                 }
             ]
         },
-        colorStates: [{
-            format: swapChainFormat
-        }]
+        fragment: {
+            module: device.createShaderModule({
+                code: glslang.compileGLSL(fs, "fragment")
+            }),
+            entryPoint: "main",
+            targets: [{
+                format: presentationFormat
+            }]
+        },
+        primitive: {
+            topology: "triangle-list",
+        },
+        depthStencil: {
+            format: "depth24plus",
+            depthWriteEnabled: true,
+            depthCompare: "less"
+        }
     });
 
     ///////////////////////////
@@ -356,16 +364,16 @@ utils.addDescription(
     const depthTexture = device.createTexture({
         size: [canvas.width, canvas.height, 1],
         format: "depth24plus",
-        usage:  GPUTextureUsage.OUTPUT_ATTACHMENT
+        usage:  GPUTextureUsage.RENDER_ATTACHMENT
     })
 
     const renderPassDescription = {
         colorAttachments: [{
-            attachment: swapChain.getCurrentTexture().createView(),
+            view: context.getCurrentTexture().createView(),
             loadValue: [0, 0, 0, 1]
         }],
         depthStencilAttachment: {
-            attachment: depthTexture.createView(),
+            view: depthTexture.createView(),
             depthLoadValue: 1,
             depthStoreOp: "store",
             stencilLoadValue: 0,
@@ -382,13 +390,13 @@ utils.addDescription(
         rotation[2] += 0.005;
         utils.xformMatrix(modelMatrix, null, rotation, null);
         
-        device.defaultQueue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);
+        device.queue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);
 
         ////////////////////
         // Swap framebuffer
         ////////////////////
 
-        renderPassDescription.colorAttachments[0].attachment = swapChain.getCurrentTexture().createView();
+        renderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
         const commandEncoder = device.createCommandEncoder();
         const renderPass = commandEncoder.beginRenderPass(renderPassDescription);
@@ -408,7 +416,7 @@ utils.addDescription(
         renderPass.draw(numVertices, 1, 0, 0);
         renderPass.endPass();
 
-        device.defaultQueue.submit([commandEncoder.finish()]);
+        device.queue.submit([commandEncoder.finish()]);
 
         requestAnimationFrame(draw);
     });

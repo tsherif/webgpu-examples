@@ -49,9 +49,9 @@ utils.addDescription(
         import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
     ]);
 
-    ///////////////////////////////////////
-    // Set up device and canvas swap chain
-    ///////////////////////////////////////
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
 
     const device = await adapter.requestDevice();
 
@@ -59,11 +59,11 @@ utils.addDescription(
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const context = canvas.getContext("gpupresent");
-    const swapChainFormat = await context.getSwapChainPreferredFormat(device);
-    const swapChain = context.configureSwapChain({
+    const context = canvas.getContext("webgpu");
+    const presentationFormat = context.getPreferredFormat(adapter);
+    context.configure({
         device,
-        format: swapChainFormat
+        format: presentationFormat
     });
 
     /////////////////////////////////////////////////
@@ -89,22 +89,24 @@ utils.addDescription(
     `.trim();
 
     const pipeline = device.createRenderPipeline({
-        vertexStage: {
+        vertex: {
             module: device.createShaderModule({
                 code: glslang.compileGLSL(vs, "vertex")
             }),
             entryPoint: "main"
         },
-        fragmentStage: {
+        fragment: {
             module: device.createShaderModule({
                 code: glslang.compileGLSL(fs, "fragment")
             }),
-            entryPoint: "main"
+            entryPoint: "main",
+            targets: [{
+                format: presentationFormat
+            }]
         },
-        primitiveTopology: "point-list",
-        colorStates: [{
-            format: swapChainFormat
-        }]
+        primitive: {
+            topology: "point-list"
+        }
     });
 
     ////////////////////////////////////
@@ -112,11 +114,11 @@ utils.addDescription(
     ////////////////////////////////////
 
     const commandEncoder = device.createCommandEncoder();
-    const textureView = swapChain.getCurrentTexture().createView();
+    const textureView = context.getCurrentTexture().createView();
 
     const renderPass = commandEncoder.beginRenderPass({
         colorAttachments: [{
-            attachment: textureView,
+            view: textureView,
             loadValue: [0, 0, 0, 1]
         }]
     });
@@ -124,7 +126,7 @@ utils.addDescription(
     renderPass.draw(1, 1, 0, 0);
     renderPass.endPass();
 
-    device.defaultQueue.submit([commandEncoder.finish()]);
+    device.queue.submit([commandEncoder.finish()]);
 })();
 </script>
 </body>
