@@ -63,7 +63,7 @@ utils.addDescription(
     const presentationFormat = context.getPreferredFormat(adapter);
     context.configure({
         device,
-        format: presentationFormat
+        format: presentationFormat,
     });
 
     ////////////////////////////////////////
@@ -134,43 +134,42 @@ utils.addDescription(
     // Create render pipeline
     ///////////////////////////
 
-    const vs = `
-    #version 450
-
-    layout(location=0) in vec4 position;
-    layout(location=1) in vec3 normal;
-
-    layout(set=0, binding=0) uniform SceneUniforms {
-        mat4 mvpMatrix;
+    const shader = `
+    [[block]]
+    struct SceneUniforms {
+        mvpMatrix: mat4x4<f32>;
     };
+    [[group(0), binding(0)]] var<uniform> uniforms: SceneUniforms;
 
-    layout(location=0) out vec3 vNormal;
+    struct Varyings {
+        [[builtin(position)]] pos: vec4<f32>;
+        [[location(0)]] normal: vec3<f32>;
+    };
     
-    void main() {
-        vNormal = normal;
-        gl_Position = mvpMatrix * position;
-    } 
+    [[stage(vertex)]]
+    fn main_vs(
+        [[location(0)]] position: vec4<f32>,
+        [[location(1)]] normal: vec3<f32>,
+    ) -> Varyings {
+        return Varyings(uniforms.mvpMatrix * position, normal);
+    }
+
+    [[stage(fragment)]]
+    fn main_fs(
+        in: Varyings
+    ) -> [[location(0)]] vec4<f32> {
+        return vec4<f32>(abs(in.normal), 1.0);
+    }
     `.trim();
 
-    const fs = `
-    #version 450
-    
-    layout(location=0) in vec3 vNormal;
-
-    layout(location=0) out vec4 fragColor;
-
-    void main() {
-        fragColor = vec4(abs(vNormal), 1.0);
-    } 
-    `.trim();
-
+    const shader_module = device.createShaderModule({
+        code: shader,
+    });
     const pipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({bindGroupLayouts: [sceneUniformBindGroupLayout]}),
         vertex: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(vs, "vertex")
-            }),
-            entryPoint: "main",
+            module: shader_module,
+            entryPoint: "main_vs",
             buffers: [
                 {
                     arrayStride: 12,
@@ -191,10 +190,8 @@ utils.addDescription(
             ]
         },
         fragment: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main",
+            module: shader_module,
+            entryPoint: "main_fs",
             targets: [{
                 format: presentationFormat
             }]
@@ -222,7 +219,8 @@ utils.addDescription(
     const renderPassDescription = {
         colorAttachments: [{
             view: context.getCurrentTexture().createView(),
-            loadValue: [0, 0, 0, 1]
+            loadValue: [0, 0, 0, 1],
+            storeOp: "store",
         }],
         depthStencilAttachment: {
             view: depthTexture.createView(),
