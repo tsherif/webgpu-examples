@@ -97,38 +97,32 @@ utils.addDescription(
     // Create render pipeline
     ///////////////////////////
 
-    const vs = `
-    #version 450
+    const shader = device.createShaderModule({
+        code: `
+            struct Varyings {
+                [[builtin(position)]] position: vec4<f32>;
+                [[location(0)]] color: vec4<f32>;
+            };
+            
+            [[stage(vertex)]]
+            fn main_vs(
+                [[location(0)]] position: vec4<f32>,
+                [[location(1)]] color: vec4<f32>,
+            ) -> Varyings {
+                return Varyings(position, color);
+            }
 
-    layout(location=0) in vec4 position;
-    layout(location=1) in vec4 color;
-
-    layout(location=0) out vec4 vColor;
-    
-    void main() {
-        vColor = color;
-        gl_Position = position;
-    } 
-    `.trim();
-
-    const fs = `
-    #version 450
-    
-    layout(location=0) in vec4 vColor;
-
-    layout(location=0) out vec4 fragColor;
-
-    void main() {
-        fragColor = vColor;
-    } 
-    `.trim();
+            [[stage(fragment)]]
+            fn main_fs(in: Varyings) -> [[location(0)]] vec4<f32> {
+                return in.color;
+            } 
+            `.trim(),
+    });
 
     const pipeline = device.createRenderPipeline({
         vertex: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(vs, "vertex")
-            }),
-            entryPoint: "main",
+            module: shader,
+            entryPoint: "main_vs",
             buffers: [
                 {
                     arrayStride: 8,
@@ -149,10 +143,8 @@ utils.addDescription(
             ]
         },
         fragment: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main",
+            module: shader,
+            entryPoint: "main_fs",
             targets: [{
                 format: presentationFormat
             }]
@@ -172,7 +164,8 @@ utils.addDescription(
     const renderPass = commandEncoder.beginRenderPass({
         colorAttachments: [{
             view: textureView,
-            loadValue: [0, 0, 0, 1]
+            loadValue: [0, 0, 0, 1],
+            storeOp: "store",
         }]
     });
     renderPass.setPipeline(pipeline);
