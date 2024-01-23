@@ -33,7 +33,7 @@
 utils.checkSupport();
 utils.addDescription(
     "Triangle",
-    "Creating mapped buffers, loading vertex data, and drawing a triangle.",
+    "Loading vertex data and drawing a triangle.",
     "triangle.html"
 );
 
@@ -43,10 +43,8 @@ utils.addDescription(
     // to compile GLSL to SPIR-V
     //////////////////////////////////////////
 
-    const [adapter, glslang] = await Promise.all([
-        navigator.gpu.requestAdapter(),
-        import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
-    ]);
+    const adapter = await navigator.gpu.requestAdapter();
+    const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
     ////////////////////////////////////
     // Set up device and canvas context
@@ -59,7 +57,6 @@ utils.addDescription(
     canvas.height = window.innerHeight;
 
     const context = canvas.getContext("webgpu");
-    const presentationFormat = context.getPreferredFormat(adapter);
     context.configure({
         device,
         format: presentationFormat
@@ -71,64 +68,71 @@ utils.addDescription(
 
     const positionBuffer = device.createBuffer({
         size: 24,
-        usage: GPUBufferUsage.VERTEX,
-        mappedAtCreation: true
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
-    new Float32Array(positionBuffer.getMappedRange()).set([
+    device.queue.writeBuffer(positionBuffer, 0, new Float32Array([
         -0.5, -0.5,
         0.5, -0.5,
         0.0, 0.5
-    ]);
-    positionBuffer.unmap();
+    ]));
 
     const colorBuffer = device.createBuffer({
         size: 12,
-        usage: GPUBufferUsage.VERTEX,
-        mappedAtCreation: true
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
-    new Uint8Array(colorBuffer.getMappedRange()).set([
+    device.queue.writeBuffer(colorBuffer, 0, new Uint8Array([
         255, 0, 0, 255,
         0, 255, 0, 255,
         0, 0, 255, 255
-    ]);
-    colorBuffer.unmap();
+    ]));
+
+    ////////////////////////////////////////
+    // Create shader module with both 
+    // vertex and fragment shaders.
+    ////////////////////////////////////////
+
+    const triangleShaderModule = device.createShaderModule({
+        code: `
+            // Return for vertex shader includes
+            // clip position and color passed on 
+            // to fragment shader.
+            struct VSOut {
+                @builtin(position) position: vec4f,
+                @location(0) color: vec4f
+            };
+
+            @vertex
+            fn vs(
+                @location(0) position : vec4f,
+                @location(1) color: vec4f
+            ) -> VSOut {
+                var vsOut: VSOut;
+                vsOut.position = position;
+                vsOut.color = color;
+
+                return vsOut;
+            }
+
+            // Input to fragment shader is color from
+            // VSOut struct (matched by location).
+            @fragment
+            fn fs(
+                @location(0) color: vec4f
+            ) -> @location(0) vec4f {
+                return color;
+            }
+        `
+    });
 
     ///////////////////////////
     // Create render pipeline
     ///////////////////////////
 
-    const vs = `
-    #version 450
-
-    layout(location=0) in vec4 position;
-    layout(location=1) in vec4 color;
-
-    layout(location=0) out vec4 vColor;
-    
-    void main() {
-        vColor = color;
-        gl_Position = position;
-    } 
-    `.trim();
-
-    const fs = `
-    #version 450
-    
-    layout(location=0) in vec4 vColor;
-
-    layout(location=0) out vec4 fragColor;
-
-    void main() {
-        fragColor = vColor;
-    } 
-    `.trim();
-
     const pipeline = device.createRenderPipeline({
+        layout: 'auto',
         vertex: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(vs, "vertex")
-            }),
-            entryPoint: "main",
+            module: triangleShaderModule,
+            entryPoint: "vs",
             buffers: [
                 {
                     arrayStride: 8,
@@ -149,10 +153,8 @@ utils.addDescription(
             ]
         },
         fragment: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main",
+            module: triangleShaderModule,
+            entryPoint: "fs",
             targets: [{
                 format: presentationFormat
             }]
@@ -164,15 +166,16 @@ utils.addDescription(
 
     ////////////////////////////////////
     // Create and submit command buffer
+    // with 1 render pass.
     ////////////////////////////////////
 
     const commandEncoder = device.createCommandEncoder();
-    const textureView = context.getCurrentTexture().createView();
-
     const renderPass = commandEncoder.beginRenderPass({
         colorAttachments: [{
-            view: textureView,
-            loadValue: [0, 0, 0, 1]
+            view: context.getCurrentTexture().createView(),
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: [0, 0, 0, 1]
         }]
     });
     renderPass.setPipeline(pipeline);
@@ -182,8 +185,10 @@ utils.addDescription(
     renderPass.setVertexBuffer(0, positionBuffer);
     renderPass.setVertexBuffer(1, colorBuffer);
     
-    renderPass.draw(3, 1, 0, 0);
-    renderPass.endPass();
+    // Draw 3 vertices.
+    renderPass.draw(3);
+
+    renderPass.end();
 
     device.queue.submit([commandEncoder.finish()]);
 })();
