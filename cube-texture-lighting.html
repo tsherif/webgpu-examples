@@ -137,9 +137,9 @@ addDescription(
     mat4.lookAt(viewMatrix, [1, 1, 1], [0, 0, 0], [0, 1, 0]);
     mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
 
-    /////////////////////////////////////////////
-    // Create uniform buffers and binding layout
-    /////////////////////////////////////////////
+    ////////////////////////////
+    // Create uniform buffers
+    ////////////////////////////
 
     const vertexUniformBuffer = device.createBuffer({
         size: 128,
@@ -154,66 +154,6 @@ addDescription(
     device.queue.writeBuffer(vertexUniformBuffer, 64, viewProjectionMatrix);
     device.queue.writeBuffer(fragmentUniformBuffer, 0, eyePosition);
     device.queue.writeBuffer(fragmentUniformBuffer, 16, lightPosition);
-
-    const sceneUniformBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX,
-                buffer: {
-                    type: "uniform"
-                }
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.FRAGMENT,
-                buffer: {
-                    type: "uniform"
-                }
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.FRAGMENT,
-                sampler: {
-                    type: "filtering"
-                }
-            },
-            {
-                binding: 3,
-                visibility: GPUShaderStage.FRAGMENT,
-                texture: {
-                    sampleType: "float"
-                }
-            }
-        ]
-    });
-
-    const sceneUniformBindGroup = device.createBindGroup({
-        layout: sceneUniformBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: vertexUniformBuffer
-                }
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: fragmentUniformBuffer
-                }
-            },
-            {
-                binding: 2,
-                resource: sampler
-            },
-            {
-                binding: 3,
-                resource: texture.createView()
-            }
-
-        ]
-    });
 
     ///////////////////////////
     // Create render pipeline
@@ -279,7 +219,7 @@ addDescription(
     });
 
     const pipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({bindGroupLayouts: [sceneUniformBindGroupLayout]}),
+        layout: 'auto',
         vertex: {
             module: cubeShaderModule,
             entryPoint: "vs",
@@ -325,6 +265,33 @@ addDescription(
             depthWriteEnabled: true,
             depthCompare: "less"
         }
+    });
+
+    const sceneUniformBindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: vertexUniformBuffer
+                }
+            },
+            {
+                binding: 1,
+                resource: {
+                    buffer: fragmentUniformBuffer
+                }
+            },
+            {
+                binding: 2,
+                resource: sampler
+            },
+            {
+                binding: 3,
+                resource: texture.createView()
+            }
+
+        ]
     });
 
     ///////////////////////////
