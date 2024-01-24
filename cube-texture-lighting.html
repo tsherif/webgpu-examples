@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <link rel="stylesheet" href="css/example.css">
     <script src="utils/gl-matrix.js"></script>
-    <script src="utils/utils.js"></script>
 </head>
 <!--
   The MIT License (MIT)
@@ -30,9 +29,11 @@
 -->
 <body>
 <canvas id="webgpu-canvas"></canvas>
-<script>
-utils.checkSupport();
-utils.addDescription(
+<script type="module">
+import { checkSupport, addDescription, getImageData, createCube, xformMatrix } from "./utils/utils.js";
+
+checkSupport();
+addDescription(
     "Textured, Lit Cube",
     "Creating a texture from a DOM image, setting up vertex and uniform buffers, and animating a cube.",
     "cube-texture-lighting.html"
@@ -46,7 +47,7 @@ utils.addDescription(
     //////////////////////////////////////////
 
     const img = document.createElement("img");
-    img.src = "img/marble.png";
+    img.src = "img/webgpu.png";
 
     const adapter = await navigator.gpu.requestAdapter();
     const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
@@ -82,49 +83,23 @@ utils.addDescription(
         usage: GPUTextureUsage.SAMPLED | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
     });
 
-    const textureData = utils.getImageData(img);
+    const textureData = getImageData(img);
 
-    if (typeof device.queue.writeTexture === "function") {
-        device.queue.writeTexture(
-            { texture },
-            textureData,
-            { bytesPerRow: img.width * 4 },
-            [
-                img.width, 
-                img.height, 
-                1
-            ]
-        );
-    } else {
-        // NOTE: Fallback until Queue.writeTexture is implemented.
-        const textureDataBuffer = device.createBuffer({
-            size: textureData.byteLength,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-        });
-
-        device.queue.writeBuffer(textureDataBuffer, 0, textureData);
-
-        const textureLoadEncoder = device.createCommandEncoder();
-        textureLoadEncoder.copyBufferToTexture({
-            buffer: textureDataBuffer,
-            bytesPerRow: img.width * 4,
-            imageHeight: img.height
-        }, {
-            texture,
-        }, [
+    device.queue.writeTexture(
+        { texture },
+        textureData,
+        { bytesPerRow: img.width * 4 },
+        [
             img.width, 
-            img.height, 
-            1
-        ]);
-
-        device.queue.submit([textureLoadEncoder.finish()]);
-    }
+            img.height
+        ]
+    );
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
     ////////////////////////////////////////
 
-    const cubeData = utils.createCube();
+    const cubeData = createCube();
     const numVertices = cubeData.positions.length / 3;
 
     const positionBuffer = device.createBuffer({
@@ -244,69 +219,70 @@ utils.addDescription(
     // Create render pipeline
     ///////////////////////////
 
-    const vs = `
-    #version 450
+    const cubeShaderModule = device.createShaderModule({
+        code: `
+            struct VertexUniforms {
+                worldMatrix: mat4x4f ,
+                viewProjectionMatrix: mat4x4f 
+            };
 
-    layout(location=0) in vec4 position;
-    layout(location=1) in vec3 normal;
-    layout(location=2) in vec2 uv;
+            @group(0) @binding(0) var<uniform> vertexUniforms: VertexUniforms;
 
-    layout(set=0, binding=0) uniform VertexUniforms {
-        mat4 worldMatrix;
-        mat4 viewProjectionMatrix;
-    };
+            struct VSOut{
+                @builtin(position) clipPosition: vec4f,
+                @location(0) worldPosition: vec3f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f
+            };
 
-    layout(location=0) out vec3 vPosition;
-    layout(location=1) out vec3 vNormal;
-    layout(location=2) out vec2 vUV;
-    
-    void main() {
-        vec4 worldPosition = worldMatrix * position;
-        vPosition = worldPosition.xyz;
-        vNormal = mat3(worldMatrix) * normal;
-        vUV = uv;
-        gl_Position = viewProjectionMatrix * worldPosition;
-    } 
-    `.trim();
+            @vertex
+            fn vs(
+                @location(0) position: vec4f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f,
+            ) -> VSOut {
+                let worldPosition: vec4f = vertexUniforms.worldMatrix * position;
 
-    const fs = `
-    #version 450
-    
-    layout(location=0) in vec3 vPosition;
-    layout(location=1) in vec3 vNormal;
-    layout(location=2) in vec2 vUV;
+                var vsOut: VSOut;
+                vsOut.clipPosition = vertexUniforms.viewProjectionMatrix * worldPosition;
+                vsOut.worldPosition = worldPosition.xyz;
+                vsOut.normal = (vertexUniforms.worldMatrix * vec4f(normal, 0.0)).xyz;
+                vsOut.uv = uv;
 
-    layout(set=0, binding=1) uniform FragmentUniforms {
-        vec4 eyePosition;
-        vec4 lightPosition;
-    };
+                return vsOut;
+            }
 
-    layout(set=0, binding=2) uniform sampler textureSampler;
-    layout(set=0, binding=3) uniform texture2D textureData;
+            struct FragmentUniforms {
+                eyePosition: vec4f,
+                lightPosition: vec4f
+            };
 
-    layout(location=0) out vec4 fragColor;
+            @group(0) @binding(1) var<uniform> fragmentUniforms: FragmentUniforms;
+            @group(0) @binding(2) var textureSampler: sampler;
+            @group(0) @binding(3) var textureData: texture_2d<f32>;
 
-    void main() {
-        vec3 surfaceColor = texture(sampler2D(textureData, textureSampler), vUV).rgb;
+            @fragment
+            fn fs(fsIn: VSOut) -> @location(0) vec4f {
+                let surfaceColor: vec3f = textureSample(textureData, textureSampler, vec2f(fsIn.uv.x, 1.0 - fsIn.uv.y)).rgb;
 
-        vec3 normal = normalize(vNormal);
-        vec3 eyeVec = normalize(eyePosition.xyz - vPosition);
-        vec3 incidentVec = normalize(vPosition - lightPosition.xyz);
-        vec3 lightVec = -incidentVec;
-        float diffuse = max(dot(lightVec, normal), 0.0);
-        float highlight = pow(max(dot(eyeVec, reflect(incidentVec, normal)), 0.0), 100.0);
-        float ambient = 0.1;
-        fragColor = vec4(surfaceColor * (diffuse + highlight + ambient), 1.0);
-    } 
-    `.trim();
+                let normal: vec3f = normalize(fsIn.normal);
+                let eyeVec: vec3f = normalize(fragmentUniforms.eyePosition.xyz - fsIn.worldPosition);
+                let incidentVec: vec3f = normalize(fsIn.worldPosition - fragmentUniforms.lightPosition.xyz);
+                let lightVec: vec3f = -incidentVec;
+                let diffuse: f32 = max(dot(lightVec, normal), 0.0);
+                let highlight: f32 = pow(max(dot(eyeVec, reflect(incidentVec, normal)), 0.0), 100.0);
+                let ambient: f32 = 0.1;
+                return vec4f(surfaceColor * (diffuse + highlight + ambient), 1.0);
+            }
+
+        `
+    });
 
     const pipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({bindGroupLayouts: [sceneUniformBindGroupLayout]}),
         vertex: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(vs, "vertex")
-            }),
-            entryPoint: "main",
+            module: cubeShaderModule,
+            entryPoint: "vs",
             buffers: [
                 {
                     arrayStride: 12,
@@ -335,10 +311,8 @@ utils.addDescription(
             ]
         },
         fragment: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main",
+            module: cubeShaderModule,
+            entryPoint: "fs",
             targets: [{
                 format: presentationFormat
             }]
@@ -366,14 +340,15 @@ utils.addDescription(
     const renderPassDescription = {
         colorAttachments: [{
             view: context.getCurrentTexture().createView(),
-            loadValue: [0, 0, 0, 1]
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: [0, 0, 0, 1]
         }],
         depthStencilAttachment: {
             view: depthTexture.createView(),
-            depthLoadValue: 1,
-            depthStoreOp: "store",
-            stencilLoadValue: 0,
-            stencilStoreOp: "store"
+            depthClearValue: 1,
+            depthLoadOp: 'clear',
+            depthStoreOp: "store"
         }
     };
 
@@ -384,7 +359,7 @@ utils.addDescription(
         
         rotation[0] += 0.01;
         rotation[2] += 0.005;
-        utils.xformMatrix(modelMatrix, null, rotation, null);
+        xformMatrix(modelMatrix, null, rotation, null);
         
         device.queue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);
 
@@ -410,7 +385,7 @@ utils.addDescription(
         renderPass.setBindGroup(0, sceneUniformBindGroup);
         
         renderPass.draw(numVertices, 1, 0, 0);
-        renderPass.endPass();
+        renderPass.end();
 
         device.queue.submit([commandEncoder.finish()]);
 
