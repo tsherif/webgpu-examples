@@ -48,11 +48,8 @@ utils.addDescription(
     const img = document.createElement("img");
     img.src = "img/marble.png";
 
-    const [adapter, glslang] = await Promise.all([
-        navigator.gpu.requestAdapter(),
-        import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default()),
-        img.decode()
-    ]);
+    const adapter = await navigator.gpu.requestAdapter();
+    const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
     ////////////////////////////////////
     // Set up device and canvas context
@@ -65,7 +62,6 @@ utils.addDescription(
     canvas.height = window.innerHeight;
 
     const context = canvas.getContext("webgpu");
-    const presentationFormat = context.getPreferredFormat(adapter);
     context.configure({
         device,
         format: presentationFormat
@@ -81,7 +77,7 @@ utils.addDescription(
     });
 
     const texture = device.createTexture({
-        size: [img.width, img.height, 1],
+        size: [img.width, img.height],
         format: "rgba8unorm",
         usage: GPUTextureUsage.SAMPLED | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
     });

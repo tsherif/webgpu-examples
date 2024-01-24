@@ -3,7 +3,6 @@
 <head>
     <meta charset="utf-8">
     <link rel="stylesheet" href="css/example.css">
-    <script src="utils/utils.js"></script>
 </head>
 <!--
   The MIT License (MIT)
@@ -29,9 +28,11 @@
 -->
 <body>
 <canvas id="webgpu-canvas"></canvas>
-<script>
-utils.checkSupport();
-utils.addDescription(
+<script type="module">
+import { checkSupport, addDescription } from "./utils/utils.js";
+
+checkSupport();
+addDescription(
     "Triangle",
     "Loading vertex data and drawing a triangle.",
     "triangle.html"
