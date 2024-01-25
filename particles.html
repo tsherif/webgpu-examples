@@ -3,7 +3,6 @@
 <head>
     <meta charset="utf-8">
     <link rel="stylesheet" href="css/example.css">
-    <script src="utils/utils.js"></script>
 </head>
 <!--
   The MIT License (MIT)
@@ -29,13 +28,15 @@
 -->
 <body>
 <canvas id="webgpu-canvas"></canvas>
-<script>
-utils.checkSupport();
+<script type="module">
+import { checkSupport, addDescription } from "./utils/utils.js";
+
+checkSupport();
 
 const NUM_PARTICLES = 50000;
 const PARTICLE_SIZE = 2;
 
-utils.addDescription(
+addDescription(
     "Particles",
     `Using a compute shader to simulate gravity on ${NUM_PARTICLES} instanced quad particles.`,
     "particles.html"
