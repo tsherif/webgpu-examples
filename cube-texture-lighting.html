@@ -41,15 +41,15 @@ addDescription(
 
 (async () => {
     //////////////////////////////////////////
-    // Set up WebGPU adapter, load glslang
-    // to compile GLSL to SPIR-V, load
+    // Set up WebGPU adapter, load
     // texture image
     //////////////////////////////////////////
 
-    const img = document.createElement("img");
-    img.src = "img/webgpu.png";
+    const [adapter, [image]] = await Promise.all([
+        navigator.gpu.requestAdapter(),
+        loadImageBitmaps(["img/webgpu.png"])
+    ]);
 
-    const adapter = await navigator.gpu.requestAdapter();
     const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
     ////////////////////////////////////
@@ -67,32 +67,6 @@ addDescription(
         device,
         format: presentationFormat
     });
-
-    /////////////////////////////////////////
-    // Create texture, sampler and load data
-    /////////////////////////////////////////
-
-    const [image] = await loadImageBitmaps(["img/webgpu.png"]);
-
-    const sampler = device.createSampler({
-        minFilter: "linear",
-        magFilter: "linear"
-    });
-
-    const texture = device.createTexture({
-        size: [img.width, img.height],
-        format: "rgba8unorm",
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-    });
-
-    device.queue.copyExternalImageToTexture(
-        { source: image, flipY: true },
-        { texture },
-        {
-            width: image.width,
-            height: image.height
-        }
-    );
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -154,9 +128,33 @@ addDescription(
     device.queue.writeBuffer(fragmentUniformBuffer, 0, eyePosition);
     device.queue.writeBuffer(fragmentUniformBuffer, 16, lightPosition);
 
+    /////////////////////////////////////////
+    // Create texture, sampler and load data
+    /////////////////////////////////////////
+
+    const sampler = device.createSampler({
+        minFilter: "linear",
+        magFilter: "linear"
+    });
+
+    const texture = device.createTexture({
+        size: [image.width, image.height],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    device.queue.copyExternalImageToTexture(
+        { source: image, flipY: true },
+        { texture },
+        {
+            width: image.width,
+            height: image.height
+        }
+    );
+
     ///////////////////////////
-    // Create render pipeline
-    ///////////////////////////
+    // Create shader module
+    ///////////////////////////  
 
     const cubeShaderModule = device.createShaderModule({
         code: `
@@ -216,6 +214,10 @@ addDescription(
 
         `
     });
+
+    ///////////////////////////
+    // Create render pipeline
+    ///////////////////////////
 
     const pipeline = device.createRenderPipeline({
         layout: 'auto',
@@ -298,7 +300,7 @@ addDescription(
     ///////////////////////////
     
     const depthTexture = device.createTexture({
-        size: [canvas.width, canvas.height, 1],
+        size: [canvas.width, canvas.height],
         format: "depth24plus",
         usage:  GPUTextureUsage.RENDER_ATTACHMENT
     })
