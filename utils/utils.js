@@ -390,3 +390,13 @@ export function createSphere(options) {
     };
 }
 
+export function loadImageBitmaps(urls) {
+    return Promise.all(
+        urls.map(
+            url => 
+                fetch(url)
+                    .then(resp => resp.blob())
+                    .then(blob => createImageBitmap(blob, { colorSpaceConversion: 'none' }))
+        )
+    );
+}

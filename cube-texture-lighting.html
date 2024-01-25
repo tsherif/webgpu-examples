@@ -30,7 +30,7 @@
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <script type="module">
-import { checkSupport, addDescription, getImageData, createCube, xformMatrix } from "./utils/utils.js";
+import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix } from "./utils/utils.js";
 
 checkSupport();
 addDescription(
@@ -72,6 +72,8 @@ addDescription(
     // Create texture, sampler and load data
     /////////////////////////////////////////
 
+    const [image] = await loadImageBitmaps(["img/webgpu.png"]);
+
     const sampler = device.createSampler({
         minFilter: "linear",
         magFilter: "linear"
@@ -80,19 +82,16 @@ addDescription(
     const texture = device.createTexture({
         size: [img.width, img.height],
         format: "rgba8unorm",
-        usage: GPUTextureUsage.SAMPLED | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    const textureData = getImageData(img);
-
-    device.queue.writeTexture(
+    device.queue.copyExternalImageToTexture(
+        { source: image, flipY: true },
         { texture },
-        textureData,
-        { bytesPerRow: img.width * 4 },
-        [
-            img.width, 
-            img.height
-        ]
+        {
+            width: image.width,
+            height: image.height
+        }
     );
     
     ////////////////////////////////////////
@@ -203,7 +202,7 @@ addDescription(
 
             @fragment
             fn fs(fsIn: VSOut) -> @location(0) vec4f {
-                let surfaceColor: vec3f = textureSample(textureData, textureSampler, vec2f(fsIn.uv.x, 1.0 - fsIn.uv.y)).rgb;
+                let surfaceColor: vec3f = textureSample(textureData, textureSampler, fsIn.uv).rgb;
 
                 let normal: vec3f = normalize(fsIn.normal);
                 let eyeVec: vec3f = normalize(fragmentUniforms.eyePosition.xyz - fsIn.worldPosition);
