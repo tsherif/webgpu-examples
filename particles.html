@@ -3,7 +3,6 @@
 <head>
     <meta charset="utf-8">
     <link rel="stylesheet" href="css/example.css">
-    <script src="utils/utils.js"></script>
 </head>
 <!--
   The MIT License (MIT)
@@ -29,13 +28,16 @@
 -->
 <body>
 <canvas id="webgpu-canvas"></canvas>
-<script>
-utils.checkSupport();
+<script type="module">
+import { checkSupport, addDescription } from "./utils/utils.js";
 
-const NUM_PARTICLES = 50000;
+const WORKGROUP_SIZE = 64;
+const NUM_WORKGROUPS = 1000;
+const NUM_PARTICLES = WORKGROUP_SIZE * NUM_WORKGROUPS;
 const PARTICLE_SIZE = 2;
 
-utils.addDescription(
+checkSupport();
+addDescription(
     "Particles",
     `Using a compute shader to simulate gravity on ${NUM_PARTICLES} instanced quad particles.`,
     "particles.html"
@@ -43,105 +45,111 @@ utils.addDescription(
 
 (async () => {
     //////////////////////////////////////////
-    // Set up WebGPU adapter and load glslang
-    // to compile GLSL to SPIR-V
+    // Set up WebGPU adapter
     //////////////////////////////////////////
 
-    const [adapter, glslang] = await Promise.all([
-        navigator.gpu.requestAdapter(),
-        import("https://unpkg.com/@webgpu/glslang@0.0.7/web/glslang.js").then(m => m.default())
-    ]);
+    const adapter = await navigator.gpu.requestAdapter();
+    const presentationFormat = navigator.gpu.getPreferredCanvasFormat(adapter);
 
     ////////////////////////////////////
     // Set up device and canvas context
     ////////////////////////////////////
 
     const device = await adapter.requestDevice();
-    
+
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-
     const context = canvas.getContext("webgpu");
-    const presentationFormat = await context.getPreferredFormat(adapter);
+    
     context.configure({
         device,
         format: presentationFormat
     });
 
     ////////////////////////////////////////////////////////
-    // Create buffers for simulation
-    // (input/output pair of position and velocity buffers)
+    // Create buffers for compute pass
+    // (positionBuffer also used in render pass)
     ////////////////////////////////////////////////////////
 
-    const positionBufferA = device.createBuffer({
+    const positionBuffer = device.createBuffer({
         size: 16 * NUM_PARTICLES,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
-        mappedAtCreation: true
     });
-    const positionBufferData = new Float32Array(positionBufferA.getMappedRange());
+    const positionBufferData = new Float32Array(NUM_PARTICLES * 4);
     for (let i = 0; i < positionBufferData.length; i += 4) {
         positionBufferData[i]     = Math.random() * 2 - 1;
         positionBufferData[i + 1] = Math.random() * 2 - 1;
         positionBufferData[i + 2] = Math.random() * 2 - 1;
         positionBufferData[i + 3] = 1;
     }
-    positionBufferA.unmap();
+    device.queue.writeBuffer(positionBuffer, 0, positionBufferData);
 
-    const velocityBufferA = device.createBuffer({
+    const velocityBuffer = device.createBuffer({
         size: 16 * NUM_PARTICLES,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
-        mappedAtCreation: true
     });
-    const velocityBufferData = new Float32Array(velocityBufferA.getMappedRange());
+    const velocityBufferData = new Float32Array(NUM_PARTICLES * 4);
     for (let i = 0; i < velocityBufferData.length; i += 4) {
         velocityBufferData[i]     = Math.random() * 0.002 - 0.001;
         velocityBufferData[i + 1] = Math.random() * 0.002 - 0.001;
-        velocityBufferData[i + 2] = 0;
-        velocityBufferData[i + 3] = 1;
+        velocityBufferData[i + 2] = Math.random() * 0.002 - 0.001;
+        velocityBufferData[i + 3] = 0;
     }
-    velocityBufferA.unmap();
-
-    const positionBufferB = device.createBuffer({
-        size: 16 * NUM_PARTICLES,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
-    });
-
-    const velocityBufferB = device.createBuffer({
-        size: 16 * NUM_PARTICLES,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE
-    });
+    device.queue.writeBuffer(velocityBuffer, 0, velocityBufferData);
 
     ///////////////////////////////////
-    // Create buffers for render pass
-    ///////////////////////////////////
+    // Create compute shader module
+    //////////////////////////////////
 
-    const vertexBuffer = device.createBuffer({
-        size: 32,
-        usage: GPUBufferUsage.VERTEX,
-        mappedAtCreation: true
-    });
-    new Float32Array(vertexBuffer.getMappedRange()).set([
-        -1.0, -1.0,
-        1.0, -1.0,
-        -1.0, 1.0,
-        1.0, 1.0
-    ]);
-    vertexBuffer.unmap();
+    const computeShaderModule = device.createShaderModule({
+        code: `
+            struct Mass {
+                position1: vec4f,
+                position2: vec4f,
+                position3: vec4f,
+                factor1: f32,
+                factor2: f32,
+                factor3: f32
+            };
 
-    const colorBuffer = device.createBuffer({
-        size: 4 * NUM_PARTICLES,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true
+            @group(0) @binding(0) var<storage, read_write> positions: array<vec4f>;
+            @group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>; 
+            @group(0) @binding(2) var<uniform> mass: Mass;
+
+            @compute @workgroup_size(${WORKGROUP_SIZE})
+            fn cs(@builtin(global_invocation_id) global_id: vec3u) {
+                let index = global_id.x;
+                let position = positions[index].xyz;
+                var velocity = velocities[index].xyz;
+
+                var massVec = mass.position1.xyz - position;
+                var massDist2 = max(0.01, dot(massVec, massVec));
+                var acceleration = mass.factor1 * normalize(massVec) / massDist2;
+                massVec = mass.position2.xyz - position;
+                massDist2 = max(0.01, dot(massVec, massVec));
+                acceleration += mass.factor2 * normalize(massVec) / massDist2;
+                massVec = mass.position3.xyz - position;
+                massDist2 = max(0.01, dot(massVec, massVec));
+                acceleration += mass.factor3 * normalize(massVec) / massDist2;
+
+                velocity += acceleration;
+                velocity *= 0.9999;
+
+                positions[index] = vec4f(position + velocity, 1);
+                velocities[index] = vec4f(velocity, 0);
+            }
+
+        `
+    })
+
+    const computePipeline = device.createComputePipeline({
+        layout: "auto",
+        compute: {
+            module: computeShaderModule,
+            entryPoint: "cs"
+        }
     });
-    const colorBufferData = new Uint8Array(colorBuffer.getMappedRange());
-    for (let i = 0; i < colorBufferData.length; i += 4) {
-        colorBufferData[i]     = Math.floor(Math.random() * 256);
-        colorBufferData[i + 1] = Math.floor(Math.random() * 256);
-        colorBufferData[i + 2] = Math.floor(Math.random() * 256);
-        colorBufferData[i + 3] = 128;
-    }
-    colorBuffer.unmap();
 
     //////////////////////////
     // Compute uniform buffer 
@@ -161,81 +169,28 @@ utils.addDescription(
 
     device.queue.writeBuffer(computeUniformBuffer, 0, computeUniformData);
 
-    //////////////////////////////////////////////////////////
-    // Compute binding layouts 
-    // One for reading from A buffers and writing to B,
-    // the other for reading from B buffers and writing to A
-    //////////////////////////////////////////////////////////
+    ////////////////////////
+    // Compute bind group
+    ////////////////////////
 
-    const computeBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: "storage"
-                }
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: "storage"
-                }
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: "storage"
-                }
-            },
-            {
-                binding: 3,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: "storage"
-                }
-            },
-            {
-                binding: 4,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: "uniform"
-                }
-            }
-        ]
-    });
 
-    const computeBindGroupA2B = device.createBindGroup({
-        layout: computeBindGroupLayout,
+    const computeBindGroup = device.createBindGroup({
+        layout: computePipeline.getBindGroupLayout(0),
         entries: [
             {
                 binding: 0,
                 resource: {
-                    buffer: positionBufferA
+                    buffer: positionBuffer
                 }
             },
             {
                 binding: 1,
                 resource: {
-                    buffer: velocityBufferA
+                    buffer: velocityBuffer
                 }
             },
             {
                 binding: 2,
-                resource: {
-                    buffer: positionBufferB
-                }
-            },
-            {
-                binding: 3,
-                resource: {
-                    buffer: velocityBufferB
-                }
-            },
-            {
-                binding: 4,
                 resource: {
                     buffer: computeUniformBuffer
                 }
@@ -243,186 +198,81 @@ utils.addDescription(
         ]
     });
 
-    const computeBindGroupB2A = device.createBindGroup({
-        layout: computeBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: positionBufferB
-                }
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: velocityBufferB
-                }
-            },
-            {
-                binding: 2,
-                resource: {
-                    buffer: positionBufferA
-                }
-            },
-            {
-                binding: 3,
-                resource: {
-                    buffer: velocityBufferA
-                }
-            },
-            {
-                binding: 4,
-                resource: {
-                    buffer: computeUniformBuffer
-                }
-            }
-        ]
+    ///////////////////////////////////
+    // Create buffers for render pass
+    ///////////////////////////////////
+
+    const vertexBuffer = device.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
-
-    ///////////////////////////
-    // Create compute pipeline
-    ///////////////////////////
-
-    const cs = `
-    #version 450
-
-    layout(std140, set = 0, binding = 0) buffer PositionsIn {
-        vec4 positionsIn[${NUM_PARTICLES}];
-    };
-
-    layout(std140, set = 0, binding = 1) buffer VelocityIn {
-        vec4 velocityIn[${NUM_PARTICLES}];
-    };
-
-    layout(std140, set = 0, binding = 2) buffer PositionsOut {
-        vec4 positionsOut[${NUM_PARTICLES}];
-    }; 
-
-    layout(std140, set = 0, binding = 3) buffer VelocityOut {
-        vec4 velocityOut[${NUM_PARTICLES}];
-    }; 
-
-    layout(std140, set = 0, binding = 4) uniform Mass {
-        vec4 mass1Position;
-        vec4 mass2Position;
-        vec4 mass3Position;
-        float mass1Factor;
-        float mass2Factor;
-        float mass3Factor;
-    };
-
-    void main() {
-        uint index = gl_GlobalInvocationID.x;
-
-        vec3 position = positionsIn[index].xyz;
-        vec3 velocity = velocityIn[index].xyz;
-
-        vec3 massVec = mass1Position.xyz - position;
-        float massDist2 = max(0.01, dot(massVec, massVec));
-        vec3 acceleration = mass1Factor * normalize(massVec) / massDist2;
-        massVec = mass2Position.xyz - position;
-        massDist2 = max(0.01, dot(massVec, massVec));
-        acceleration += mass2Factor * normalize(massVec) / massDist2;
-        massVec = mass3Position.xyz - position;
-        massDist2 = max(0.01, dot(massVec, massVec));
-        acceleration += mass3Factor * normalize(massVec) / massDist2;
-
-        velocity += acceleration;
-        velocity *= 0.9999;
-
-        positionsOut[index] = vec4(position + velocity, 1);
-        velocityOut[index] = vec4(velocity, 0);
-    }
-
-    `.trim();
-
-    const computePipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({bindGroupLayouts: [computeBindGroupLayout]}),
-        compute: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(cs, "compute")
-            }),
-            entryPoint: "main"
-        }
-    });
-
-    ///////////////////////////////////////////////
-    // Rendering uniform buffer and binding layout 
-    ///////////////////////////////////////////////
-
-    const vertexUniformBuffer = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    device.queue.writeBuffer(vertexUniformBuffer, 0, new Float32Array([
-        canvas.width, canvas.height, PARTICLE_SIZE
+    device.queue.writeBuffer(vertexBuffer, 0, new Float32Array([
+        -1.0, -1.0,
+        1.0, -1.0,
+        -1.0, 1.0,
+        1.0, 1.0
     ]));
 
-    const vertexUniformBindGroupLayout = device.createBindGroupLayout({
-        entries: [{
-            binding: 0,
-            visibility: GPUShaderStage.VERTEX,
-            buffer: {
-                type: "uniform"
-            }
-        }]
+    const colorBuffer = device.createBuffer({
+        size: 4 * NUM_PARTICLES,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    const colorBufferData = new Uint8Array(4 * NUM_PARTICLES);
+    for (let i = 0; i < colorBufferData.length; i += 4) {
+        colorBufferData[i]     = Math.floor(Math.random() * 256);
+        colorBufferData[i + 1] = Math.floor(Math.random() * 256);
+        colorBufferData[i + 2] = Math.floor(Math.random() * 256);
+        colorBufferData[i + 3] = 128;
+    }
+    device.queue.writeBuffer(colorBuffer, 0, colorBufferData);
+
+    /////////////////////////////////
+    // Create render shader module
+    /////////////////////////////////
+
+    const renderShaderModule = device.createShaderModule({
+        code: `
+            struct VertexUniforms {
+                screenDimensions: vec2f,
+                particleSize: f32
+            };
+
+            struct VSOut {
+                @builtin(position) clipPosition: vec4f,
+                @location(0) color: vec4f
+            };
+
+            @group(0) @binding(0) var<uniform> vertexUniforms: VertexUniforms;
+
+            @vertex
+            fn vs(
+                @location(0) vertexPosition: vec2f,
+                @location(1) color: vec4f,
+                @location(2) position: vec3f
+            ) -> VSOut {
+                var vsOut: VSOut;
+                vsOut.clipPosition = vec4f(vertexPosition * vertexUniforms.particleSize / vertexUniforms.screenDimensions + position.xy, position.z, 1.0);
+                vsOut.color = color;
+
+                return vsOut;
+            }             
+
+            @fragment 
+            fn fs(@location(0) color: vec4f) -> @location(0) vec4f {
+                return vec4f(color.rgb * color.a, color.a);
+            } 
+        `
     });
 
-    const vertexUniformBindGroup = device.createBindGroup({
-        layout: vertexUniformBindGroupLayout,
-        entries: [{
-            binding: 0,
-            resource: {
-                buffer: vertexUniformBuffer
-            }
-        }]
-    });
-
-    ///////////////////////////
+     /////////////////////////////////
     // Create render pipeline
-    ///////////////////////////
-
-    const vs = `
-    #version 450
-
-    layout(location=0) in vec2 vertexPosition;
-    layout(location=1) in vec4 color;
-    layout(location=2) in vec3 position;
-
-    layout(set=0, binding=0) uniform VertexUniforms {
-        vec2 screenDimensions;
-        float particleSize;
-    };
-
-    layout(location=0) out vec4 vColor;
-    
-    void main() {
-        vColor = color;
-        gl_Position = vec4(vertexPosition * particleSize / screenDimensions + position.xy, position.z, 1.0);
-    } 
-    `.trim();
-
-    const fs = `
-    #version 450
-    
-    layout(location=0) in vec4 vColor;
-
-    layout(location=0) out vec4 fragColor;
-
-    void main() {
-        fragColor = vColor;
-        fragColor.rgb *= fragColor.a;
-    } 
-    `.trim();
+    /////////////////////////////////
 
     const renderPipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({bindGroupLayouts: [vertexUniformBindGroupLayout]}),
+        layout: "auto",
         vertex: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(vs, "vertex")
-            }),
-            entryPoint: "main",
+            module: renderShaderModule,
+            entryPoint: "vs",
             buffers: [
                 {
                     arrayStride: 8,
@@ -453,10 +303,8 @@ utils.addDescription(
             ]
         },
         fragment: {
-            module: device.createShaderModule({
-                code: glslang.compileGLSL(fs, "fragment")
-            }),
-            entryPoint: "main",
+            module: renderShaderModule,
+            entryPoint: "fs",
             targets: [{
                 format: presentationFormat,
                 colorBlend: {
@@ -475,6 +323,30 @@ utils.addDescription(
         }
     });
 
+    ///////////////////////////////////////////////
+    // Rendering uniform buffer
+    ///////////////////////////////////////////////
+
+    const vertexUniformBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(vertexUniformBuffer, 0, new Float32Array([
+        canvas.width, canvas.height, PARTICLE_SIZE
+    ]));
+
+    const vertexUniformBindGroup = device.createBindGroup({
+        layout: renderPipeline.getBindGroupLayout(0),
+        entries: [{
+            binding: 0,
+            resource: {
+                buffer: vertexUniformBuffer
+            }
+        }]
+    });
+
+
     ///////////////////////////
     // Render pass description
     ///////////////////////////
@@ -482,18 +354,13 @@ utils.addDescription(
     const renderPassDescriptor = {
         colorAttachments: [{
             view: context.getCurrentTexture().createView(),
-            loadValue: [0, 0, 0, 1]
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: [0, 0, 0, 1]
         }]
     };
 
-    let currentPositionBuffer = positionBufferB;
-
     requestAnimationFrame(function draw() {
-        ////////////////////////////////
-        // Swap compute buffer bindings
-        ////////////////////////////////
-
-        const currentComputeBindGroup = currentPositionBuffer === positionBufferA ? computeBindGroupB2A : computeBindGroupA2B;
 
         /////////////////////////
         // Set up command buffer
@@ -507,17 +374,13 @@ utils.addDescription(
 
         const computePass = commandEncoder.beginComputePass();
         computePass.setPipeline(computePipeline);
+        computePass.setBindGroup(0, computeBindGroup);
+        computePass.dispatchWorkgroups(NUM_WORKGROUPS);
+        computePass.end();
 
-        // First argument here refers to array index
-        // in computePipeline layout.bindGroupLayouts
-        computePass.setBindGroup(0, currentComputeBindGroup);
-        
-        computePass.dispatch(NUM_PARTICLES);
-        computePass.endPass();
-
-        ////////////////////
-        // Swap framebuffer
-        ////////////////////
+        ////////////////////////////////
+        // Get current canvas texture
+        ////////////////////////////////
 
         renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
 
@@ -532,26 +395,17 @@ utils.addDescription(
         // in renderPipeline vertexState.vertexBuffers
         renderPass.setVertexBuffer(0, vertexBuffer);
         renderPass.setVertexBuffer(1, colorBuffer);
-        renderPass.setVertexBuffer(2, currentPositionBuffer);
-
-        // First argument here refers to array index
-        // in renderPipeline layout.bindGroupLayouts
+        renderPass.setVertexBuffer(2, positionBuffer);
         renderPass.setBindGroup(0, vertexUniformBindGroup);
         
-        renderPass.draw(4, NUM_PARTICLES, 0, 0);
-        renderPass.endPass();
+        renderPass.draw(4, NUM_PARTICLES);
+        renderPass.end();
 
         //////////////////////////
         // Submit command buffer
         //////////////////////////
 
         device.queue.submit([commandEncoder.finish()]);
-    
-        /////////////////
-        // Swap buffers
-        /////////////////
-
-        currentPositionBuffer = currentPositionBuffer === positionBufferA ? positionBufferB : positionBufferA;
 
         requestAnimationFrame(draw);
     });
