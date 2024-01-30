@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="css/example.css">
+    <script src="utils/gl-matrix.js"></script>
+    <style>
+        html, body {
+            overflow: auto;
+        }
+
+        canvas {
+            margin: 10px;
+            border: 1px solid red;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<!--
+  The MIT License (MIT)
+
+  Copyright (c) 2020 Tarek Sherif
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of
+  this software and associated documentation files (the "Software"), to deal in
+  the Software without restriction, including without limitation the rights to
+  use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+  the Software, and to permit persons to whom the Software is furnished to do so,
+  subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+  FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+  COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+  IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+-->
+<body>
+<script type="module">
+import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, randomRange } from "./utils/utils.js";
+
+const NUM_CANVASES = 100;
+
+checkSupport();
+addDescription(
+    "Multiple Canvases",
+    `Rendering to ${NUM_CANVASES} canvases from a single device instance.`,
+    "multi-canvas.html"
+);
+
+(async () => {
+    //////////////////////////////////////////
+    // Set up WebGPU adapter, load
+    // texture image
+    //////////////////////////////////////////
+
+    const [adapter, [image]] = await Promise.all([
+        navigator.gpu.requestAdapter(),
+        loadImageBitmaps(["img/webgpu.png"])
+    ]);
+
+    const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
+
+    const device = await adapter.requestDevice();
+    
+    ////////////////////////////////////////
+    // Create vertex buffers and load data
+    ////////////////////////////////////////
+
+    const cubeData = createCube();
+    const numVertices = cubeData.positions.length / 3;
+
+    const positionBuffer = device.createBuffer({
+        size: cubeData.positions.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    const normalBuffer = device.createBuffer({
+        size: cubeData.normals.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    const uvBuffer = device.createBuffer({
+        size: cubeData.uvs.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(positionBuffer, 0, cubeData.positions);
+    device.queue.writeBuffer(normalBuffer, 0, cubeData.normals);
+    device.queue.writeBuffer(uvBuffer, 0, cubeData.uvs);
+
+    /////////////////
+    // Uniform data
+    /////////////////
+
+    const eyePosition = new Float32Array([1, 1, 1]);
+    const lightPosition = new Float32Array([1, 1, 1]);
+
+    ////////////////////////////
+    // Create uniform buffers
+    ////////////////////////////
+
+    const fragmentUniformBuffer = device.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(fragmentUniformBuffer, 0, eyePosition);
+    device.queue.writeBuffer(fragmentUniformBuffer, 16, lightPosition);
+
+    /////////////////////////////////////////
+    // Create texture, sampler and load data
+    /////////////////////////////////////////
+
+    const sampler = device.createSampler({
+        minFilter: "linear",
+        magFilter: "linear"
+    });
+
+    const texture = device.createTexture({
+        size: [image.width, image.height],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    device.queue.copyExternalImageToTexture(
+        { source: image, flipY: true },
+        { texture },
+        {
+            width: image.width,
+            height: image.height
+        }
+    );
+
+    ///////////////////////////
+    // Create shader module
+    ///////////////////////////  
+
+    const cubeShaderModule = device.createShaderModule({
+        code: `
+            struct VertexUniforms {
+                worldMatrix: mat4x4f ,
+                viewProjectionMatrix: mat4x4f 
+            };
+
+            @group(0) @binding(0) var<uniform> vertexUniforms: VertexUniforms;
+
+            struct VSOut{
+                @builtin(position) clipPosition: vec4f,
+                @location(0) worldPosition: vec3f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f
+            };
+
+            @vertex
+            fn vs(
+                @location(0) position: vec4f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f,
+            ) -> VSOut {
+                let worldPosition: vec4f = vertexUniforms.worldMatrix * position;
+
+                var vsOut: VSOut;
+                vsOut.clipPosition = vertexUniforms.viewProjectionMatrix * worldPosition;
+                vsOut.worldPosition = worldPosition.xyz;
+                vsOut.normal = (vertexUniforms.worldMatrix * vec4f(normal, 0.0)).xyz;
+                vsOut.uv = uv;
+
+                return vsOut;
+            }
+
+            struct FragmentUniforms {
+                eyePosition: vec4f,
+                lightPosition: vec4f
+            };
+
+            @group(0) @binding(1) var<uniform> fragmentUniforms: FragmentUniforms;
+            @group(0) @binding(2) var textureSampler: sampler;
+            @group(0) @binding(3) var textureData: texture_2d<f32>;
+
+            @fragment
+            fn fs(fsIn: VSOut) -> @location(0) vec4f {
+                let surfaceColor: vec3f = textureSample(textureData, textureSampler, fsIn.uv).rgb;
+
+                let normal: vec3f = normalize(fsIn.normal);
+                let eyeVec: vec3f = normalize(fragmentUniforms.eyePosition.xyz - fsIn.worldPosition);
+                let incidentVec: vec3f = normalize(fsIn.worldPosition - fragmentUniforms.lightPosition.xyz);
+                let lightVec: vec3f = -incidentVec;
+                let diffuse: f32 = max(dot(lightVec, normal), 0.0);
+                let highlight: f32 = pow(max(dot(eyeVec, reflect(incidentVec, normal)), 0.0), 100.0);
+                let ambient: f32 = 0.1;
+                return vec4f(surfaceColor * (diffuse + highlight + ambient), 1.0);
+            }
+
+        `
+    });
+
+    ///////////////////////////
+    // Create render pipeline
+    ///////////////////////////
+
+    const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+            module: cubeShaderModule,
+            entryPoint: "vs",
+            buffers: [
+                {
+                    arrayStride: 12,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float32x3",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 12,
+                    attributes: [{
+                        shaderLocation: 1,
+                        format: "float32x3",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 2,
+                        format: "float32x2",
+                        offset: 0
+                    }]
+                }
+            ]
+        },
+        fragment: {
+            module: cubeShaderModule,
+            entryPoint: "fs",
+            targets: [{
+                format: presentationFormat
+            }]
+        },
+        primitive: {
+            topology: "triangle-list",
+        },
+        depthStencil: {
+            format: "depth24plus",
+            depthWriteEnabled: true,
+            depthCompare: "less"
+        }
+    });
+
+    const canvases = new Array(NUM_CANVASES).fill(null).map(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = randomRange(100, 300);
+        canvas.height = randomRange(100, 300);
+
+        document.body.appendChild(canvas);
+
+        const context = canvas.getContext("webgpu");
+        context.configure({
+            device,
+            format: presentationFormat
+        });
+
+        const projectionMatrix = mat4.create();
+        const viewMatrix = mat4.create();
+        const viewProjectionMatrix = mat4.create();
+
+        mat4.perspective(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
+        mat4.lookAt(viewMatrix, [1, 1, 1], [0, 0, 0], [0, 1, 0]);
+        mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+        const rotation = [
+            randomRange(0, 2 * Math.PI),
+            randomRange(0, 2 * Math.PI),
+            randomRange(0, 2 * Math.PI)
+        ];
+
+        const modelMatrix = mat4.create();
+        xformMatrix(modelMatrix, null, rotation, null);
+
+
+        const vertexUniformBuffer = device.createBuffer({
+            size: 128,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
+        device.queue.writeBuffer(vertexUniformBuffer, 64, viewProjectionMatrix);
+
+        const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: vertexUniformBuffer
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: fragmentUniformBuffer
+                    }
+                },
+                {
+                    binding: 2,
+                    resource: sampler
+                },
+                {
+                    binding: 3,
+                    resource: texture.createView()
+                }
+
+            ]
+        });
+
+        const depthTexture = device.createTexture({
+            size: [canvas.width, canvas.height],
+            format: "depth24plus",
+            usage:  GPUTextureUsage.RENDER_ATTACHMENT
+        });
+    
+        return {
+            canvas, 
+            context,
+            rotation,
+            modelMatrix,
+            bindGroup,
+            vertexUniformBuffer,
+            depthTexture
+        }
+    });
+
+    ///////////////////////////
+    // Render pass description
+    ///////////////////////////
+
+    requestAnimationFrame(function draw() {
+
+        const commandEncoder = device.createCommandEncoder();
+        canvases.forEach(c => {
+
+            /////////////////////////
+            // Update model matrix
+            /////////////////////////
+            
+            c.rotation[0] += 0.01;
+            c.rotation[2] += 0.005;
+            xformMatrix(c.modelMatrix, null, c.rotation, null);
+            
+            device.queue.writeBuffer(c.vertexUniformBuffer, 0, c.modelMatrix);
+
+            const renderPass = commandEncoder.beginRenderPass({
+                colorAttachments: [{
+                    view: c.context.getCurrentTexture().createView(),
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                    clearValue: [0, 0, 0, 1]
+                }],
+                depthStencilAttachment: {
+                    view: c.depthTexture.createView(),
+                    depthClearValue: 1,
+                    depthLoadOp: 'clear',
+                    depthStoreOp: "store"
+                }
+            });
+
+            renderPass.setPipeline(pipeline);
+
+            // First argument here refers to array index
+            // in pipeline vertexState.vertexBuffers
+            renderPass.setVertexBuffer(0, positionBuffer);
+            renderPass.setVertexBuffer(1, normalBuffer);
+            renderPass.setVertexBuffer(2, uvBuffer);
+
+            // First argument here refers to array index
+            // in pipeline layout.bindGroupLayouts
+            renderPass.setBindGroup(0, c.bindGroup);
+            
+            renderPass.draw(numVertices, 1, 0, 0);
+            renderPass.end();
+        })
+
+        device.queue.submit([commandEncoder.finish()]);
+
+        requestAnimationFrame(draw);
+    });
+})();
+</script>
+</body>
+</html>
