@@ -323,6 +323,21 @@ addDescription(
             format: "depth24plus",
             usage:  GPUTextureUsage.RENDER_ATTACHMENT
         });
+
+        const renderPassDescriptor = {
+            colorAttachments: [{
+                view: context.getCurrentTexture().createView(),
+                loadOp: 'clear',
+                storeOp: 'store',
+                clearValue: [0, 0, 0, 1]
+            }],
+            depthStencilAttachment: {
+                view: depthTexture.createView(),
+                depthClearValue: 1,
+                depthLoadOp: 'clear',
+                depthStoreOp: "store"
+            }
+        };
     
         return {
             canvas, 
@@ -331,7 +346,8 @@ addDescription(
             modelMatrix,
             bindGroup,
             vertexUniformBuffer,
-            depthTexture
+            depthTexture,
+            renderPassDescriptor
         }
     });
 
@@ -354,21 +370,9 @@ addDescription(
             
             device.queue.writeBuffer(c.vertexUniformBuffer, 0, c.modelMatrix);
 
-            const renderPass = commandEncoder.beginRenderPass({
-                colorAttachments: [{
-                    view: c.context.getCurrentTexture().createView(),
-                    loadOp: 'clear',
-                    storeOp: 'store',
-                    clearValue: [0, 0, 0, 1]
-                }],
-                depthStencilAttachment: {
-                    view: c.depthTexture.createView(),
-                    depthClearValue: 1,
-                    depthLoadOp: 'clear',
-                    depthStoreOp: "store"
-                }
-            });
+            c.renderPassDescriptor.colorAttachments[0].view = c.context.getCurrentTexture().createView();
 
+            const renderPass = commandEncoder.beginRenderPass(c.renderPassDescriptor);
             renderPass.setPipeline(pipeline);
 
             // First argument here refers to array index
@@ -383,7 +387,7 @@ addDescription(
             
             renderPass.draw(numVertices, 1, 0, 0);
             renderPass.end();
-        })
+        });
 
         device.queue.submit([commandEncoder.finish()]);
 
