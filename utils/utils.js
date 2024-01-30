@@ -47,8 +47,7 @@ export function checkSupport() {
         document.body.innerHTML = `
             <h1>WebGPU not supported!</h1>
             <div>
-                SPIR-V WebGPU is currently only supported in <a href="https://www.google.com/chrome/canary/">Chrome Canary</a>
-                with the flag "enable-unsafe-webgpu" enabled.
+                WebGPU is currently only supported in <a href="https://www.google.com/chrome/index.html">Google Chrome</a>.
             </div>
             <div>
                 See the <a href="https://github.com/gpuweb/gpuweb/wiki/Implementation-Status">Implementation Status</a> page for more details.
