@@ -331,9 +331,6 @@ addDescription(
         
         device.queue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);
 
-        ////////////////////
-        // Swap framebuffer
-        ////////////////////
 
         renderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
