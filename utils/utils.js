@@ -26,8 +26,10 @@ let rotateXMat;
 let rotateYMat;
 let rotateZMat;
 let scaleMat;
+let mat4;
 
-if (window.mat4) {
+if (window.glMatrix) {
+    mat4 = glMatrix.mat4;
     translateMat = mat4.create();
     rotateXMat = mat4.create();
     rotateYMat = mat4.create();
