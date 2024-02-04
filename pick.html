@@ -35,9 +35,9 @@ const { mat4, vec3 } = glMatrix;
 
 checkSupport();
 addDescription(
-    "Textured, Lit Cube",
-    "Creating a texture from an ImageBitmap, setting up vertex and uniform buffers, and animating a 3D cube.",
-    "cube.html"
+    "Picking",
+    "Rendering to an offscreen texture, copying texture data to a buffer for a mapped read, interactions.",
+    "pick.html"
 );
 
 (async () => {
@@ -97,6 +97,17 @@ addDescription(
     // Create texture, sampler and load data
     /////////////////////////////////////////
 
+    const pickTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    const pickBuffer = device.createBuffer({
+        size: 4,
+        usage:GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
     const sampler = device.createSampler({
         minFilter: "linear",
         magFilter: "linear"
@@ -130,8 +141,8 @@ addDescription(
 
     let lightPosition = vec3.fromValues(1, 1, 0.5);  
 
-    let highlightColor = vec3.fromValues(1.5, 1.5, 0.5);
-    let unhighlightColor = vec3.fromValues(1.0, 1.0, 1.0);
+    let highlightColor = new Float32Array([1.5, 1.5, 0.5, 1.0]);
+    let unhighlightColor = new Float32Array([1.0, 1.0, 1.0, 1.0]);
 
      ////////////////////////////
     // Create uniform buffers
@@ -180,7 +191,7 @@ addDescription(
             module: pickShaderModule,
             entryPoint: "fs",
             targets: [{
-                format: presentationFormat
+                format: "rgba8unorm"
             }]
         },
         primitive: {
@@ -221,7 +232,7 @@ addDescription(
             };
 
             struct ObjectUniforms {
-                worldMatrix: mat4x4f ,
+                worldMatrix: mat4x4f,
                 highlightColor: vec4f
             };
 
@@ -268,7 +279,7 @@ addDescription(
                 let diffuse: f32 = max(dot(lightVec, normal), 0.0);
                 let highlight: f32 = pow(max(dot(eyeVec, reflect(incidentVec, normal)), 0.0), 100.0);
                 let ambient: f32 = 0.1;
-                return vec4f(surfaceColor * (diffuse + highlight + ambient), 1.0);
+                return vec4f(objectUniforms.highlightColor.rgb * surfaceColor * (diffuse + highlight + ambient), 1.0);
             }
 
         `
@@ -352,6 +363,8 @@ addDescription(
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
+    device.queue.writeBuffer(box1DrawUniformBuffer, 64, unhighlightColor);
+
     const box1DrawBindGroup = device.createBindGroup({
         layout: drawPipeline.getBindGroupLayout(0),
         entries: [
@@ -402,6 +415,8 @@ addDescription(
         size: 80,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
+
+    device.queue.writeBuffer(box2DrawUniformBuffer, 64, unhighlightColor);
 
     const box2DrawBindGroup = device.createBindGroup({
         layout: drawPipeline.getBindGroupLayout(0),
@@ -516,9 +531,24 @@ addDescription(
         size: [canvas.width, canvas.height],
         format: "depth24plus",
         usage:  GPUTextureUsage.RENDER_ATTACHMENT
-    })
+    });
 
-    const renderPassDescription = {
+    const pickRenderPassDescription = {
+        colorAttachments: [{
+            view: pickTexture.createView(),
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: [0, 0, 0, 0]
+        }],
+        depthStencilAttachment: {
+            view: depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: 'clear',
+            depthStoreOp: "store"
+        }
+    };
+
+    const drawRenderPassDescription = {
         colorAttachments: [{
             view: context.getCurrentTexture().createView(),
             loadOp: 'clear',
@@ -537,7 +567,6 @@ addDescription(
     let mouseX = 0;
     let mouseY = 0;
     let picked = false;
-    const pickedColor = new Uint8Array(4);
 
     window.addEventListener("mouseup", function(event) {
         mouseX = event.clientX;
@@ -558,38 +587,86 @@ addDescription(
             device.queue.writeBuffer(box.drawUniformBuffer, 0, box.modelMatrix);
         }
 
-        // if (picked) {
-        //     // DRAW TO PICKING BUFFER
-        //     app.drawFramebuffer(pickingBuffer).clear();
+        if (picked) {
+            const commandEncoder = device.createCommandEncoder();
+            const pickPass = commandEncoder.beginRenderPass(pickRenderPassDescription);
 
-        //     for (let i = 0, len = boxes.length; i < len; ++i) {
-        //         boxes[i].pickingDrawCall.draw();
-        //     }
+            pickPass.setPipeline(pickPipeline);
 
-        //     app.defaultDrawFramebuffer()
-        //     .readFramebuffer(pickingBuffer)
-        //     .readPixel(mouseX, canvas.height - mouseY, pickedColor);
+            // First argument here refers to array index
+            // in pipeline vertexState.vertexBuffers
+            pickPass.setVertexBuffer(0, positionBuffer);
+
+            for (const box of boxes) {
+                pickPass.setBindGroup(0, box.pickBindGroup);
+                pickPass.draw(numVertices, 1);           
+            }
+
+            pickPass.end();
             
-        //     if (pickedColor[0] === 255) {
-        //         boxes[0].objectUniforms.set(2, highlightColor);
-        //     } else {
-        //         boxes[0].objectUniforms.set(2, unhighlightColor);
-        //     }
+            const textureRowBytes = canvas.width * 4;
+            const bytesPerRow = textureRowBytes + (256 - textureRowBytes % 256);
+            commandEncoder.copyTextureToBuffer(
+                { 
+                    texture: pickTexture,
+                    origin: [mouseX, mouseY]
+                },
+                { 
+                    buffer: pickBuffer
+                },
+                [1, 1]
+            );
 
-        //     if (pickedColor[1] === 255) {
-        //         boxes[1].objectUniforms.set(2, highlightColor);
-        //     } else {
-        //         boxes[1].objectUniforms.set(2, unhighlightColor);
-        //     }
+            device.queue.submit([commandEncoder.finish()]);
 
-        //     picked = false;
-        // }
+            pickBuffer.mapAsync(GPUMapMode.READ).then(() => {
+                const pickedColor = new Uint8Array(pickBuffer.getMappedRange());
+                if (pickedColor[0] === 255) {
+                    device.queue.writeBuffer(boxes[0].drawUniformBuffer, 64, highlightColor)
+                } else {
+                    device.queue.writeBuffer(boxes[0].drawUniformBuffer, 64, unhighlightColor)
+                }
+
+                if (pickedColor[1] === 255) {
+                    device.queue.writeBuffer(boxes[1].drawUniformBuffer, 64, highlightColor)
+                } else {
+                    device.queue.writeBuffer(boxes[1].drawUniformBuffer, 64, unhighlightColor)
+                }
+
+                pickBuffer.unmap();
+            })
+            
+            // // DRAW TO PICKING BUFFER
+            // app.drawFramebuffer(pickingBuffer).clear();
+
+            // for (let i = 0, len = boxes.length; i < len; ++i) {
+            //     boxes[i].pickingDrawCall.draw();
+            // }
+
+            // app.defaultDrawFramebuffer()
+            // .readFramebuffer(pickingBuffer)
+            // .readPixel(mouseX, canvas.height - mouseY, pickedColor);
+            
+            // if (pickedColor[0] === 255) {
+            //     boxes[0].objectUniforms.set(2, highlightColor);
+            // } else {
+            //     boxes[0].objectUniforms.set(2, unhighlightColor);
+            // }
+
+            // if (pickedColor[1] === 255) {
+            //     boxes[1].objectUniforms.set(2, highlightColor);
+            // } else {
+            //     boxes[1].objectUniforms.set(2, unhighlightColor);
+            // }
+
+            picked = false;
+        }
 
         // MAIN DRAW
-        renderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
+        drawRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
         const commandEncoder = device.createCommandEncoder();
-        const renderPass = commandEncoder.beginRenderPass(renderPassDescription);
+        const renderPass = commandEncoder.beginRenderPass(drawRenderPassDescription);
 
         renderPass.setPipeline(drawPipeline);
 
@@ -601,7 +678,7 @@ addDescription(
 
         for (const box of boxes) {
             renderPass.setBindGroup(0, box.drawBindGroup);
-            renderPass.draw(numVertices, 1, 0, 0);           
+            renderPass.draw(numVertices, 1);           
         }
 
         renderPass.end();

@@ -349,7 +349,7 @@ addDescription(
         // in pipeline layout.bindGroupLayouts
         renderPass.setBindGroup(0, sceneUniformBindGroup);
         
-        renderPass.draw(numVertices, 1, 0, 0);
+        renderPass.draw(numVertices, 1);
         renderPass.end();
 
         device.queue.submit([commandEncoder.finish()]);
