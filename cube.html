@@ -260,6 +260,7 @@ addDescription(
         },
         primitive: {
             topology: "triangle-list",
+            cullMode: "back"
         },
         depthStencil: {
             format: "depth24plus",
@@ -331,9 +332,6 @@ addDescription(
         
         device.queue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);
 
-        ////////////////////
-        // Swap framebuffer
-        ////////////////////
 
         renderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
@@ -352,7 +350,7 @@ addDescription(
         // in pipeline layout.bindGroupLayouts
         renderPass.setBindGroup(0, sceneUniformBindGroup);
         
-        renderPass.draw(numVertices, 1, 0, 0);
+        renderPass.draw(numVertices, 1);
         renderPass.end();
 
         device.queue.submit([commandEncoder.finish()]);
