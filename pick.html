@@ -93,20 +93,9 @@ addDescription(
     device.queue.writeBuffer(normalBuffer, 0, cubeData.normals);
     device.queue.writeBuffer(uvBuffer, 0, cubeData.uvs);
 
-     /////////////////////////////////////////
-    // Create texture, sampler and load data
     /////////////////////////////////////////
-
-    const pickTexture = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: "rgba8unorm",
-        usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
-    });
-
-    const pickBuffer = device.createBuffer({
-        size: 4,
-        usage:GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-    });
+    // Create texture, sampler and load data
+    //////////////////////////////////////////
 
     const sampler = device.createSampler({
         minFilter: "linear",
@@ -128,7 +117,9 @@ addDescription(
         }
     );
 
-    // UNIFORMS
+     ///////////////////////
+    // Uniform values
+    ////////////////////////
     let projMatrix = mat4.create();
     mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.5, 6.0);
 
@@ -144,9 +135,24 @@ addDescription(
     let highlightColor = new Float32Array([1.5, 1.5, 0.5, 1.0]);
     let unhighlightColor = new Float32Array([1.0, 1.0, 1.0, 1.0]);
 
-     ////////////////////////////
-    // Create uniform buffers
-    ////////////////////////////
+    /////////////////////
+    // Picking pipeline
+    /////////////////////
+
+    // Picking render target
+    const pickTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    // Picking buffer to copy render target pixel values to
+    // for mapped read.
+    // (Will only store one pixel value.)
+    const pickBuffer = device.createBuffer({
+        size: 4,
+        usage:GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
 
     const pickShaderModule = device.createShaderModule({
         label: 'pick shader',
@@ -190,6 +196,8 @@ addDescription(
         fragment: {
             module: pickShaderModule,
             entryPoint: "fs",
+
+            // Renders to pickTexture
             targets: [{
                 format: "rgba8unorm"
             }]
@@ -205,10 +213,12 @@ addDescription(
         }
     });
 
-     ////////////////////////////
-    // Create uniform buffers
-    ////////////////////////////
 
+    ///////////////////
+    // Draw pipeline
+    ///////////////////
+
+    // Scene uniforms that are only set once.
     const scenUniformBuffer = device.createBuffer({
         size: 96,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -217,11 +227,6 @@ addDescription(
     device.queue.writeBuffer(scenUniformBuffer, 0, viewProjectionMatrix);
     device.queue.writeBuffer(scenUniformBuffer, 64, eyePosition);
     device.queue.writeBuffer(scenUniformBuffer, 80, lightPosition);
-
-
-    ////////////////////////////////
-    // Create draw render pipeline
-    ////////////////////////////////
 
     const drawShaderModule = device.createShaderModule({
         code: `
@@ -286,10 +291,6 @@ addDescription(
         `
     });
 
-    ////////////////////////////////
-    // Create draw render pipeline
-    ////////////////////////////////
-
     const drawPipeline = device.createRenderPipeline({
         layout: 'auto',
         vertex: {
@@ -340,8 +341,12 @@ addDescription(
         }
     });
 
-    // OBJECT DESCRIPTIONS
+    ////////////
+    // Objects
+    ////////////
     const boxes = new Array(300).fill(null).map((_, i) => {
+
+        // 0 index reserved for background.
         const index = i + 1;
 
         const r =  (index        & 0xFF) / 255;
@@ -493,14 +498,16 @@ addDescription(
             device.queue.writeBuffer(box.drawUniformBuffer, 0, box.modelMatrix);
         }
 
+        //////////////
+        // Picking
+        //////////////
+
         if (picked) {
             const commandEncoder = device.createCommandEncoder();
             const pickPass = commandEncoder.beginRenderPass(pickRenderPassDescription);
 
+            // Draw all boxes with pick color (index encoded as r, g, b, a).
             pickPass.setPipeline(pickPipeline);
-
-            // First argument here refers to array index
-            // in pipeline vertexState.vertexBuffers
             pickPass.setVertexBuffer(0, positionBuffer);
 
             for (const box of boxes) {
@@ -510,8 +517,7 @@ addDescription(
 
             pickPass.end();
             
-            const textureRowBytes = canvas.width * 4;
-            const bytesPerRow = textureRowBytes + (256 - textureRowBytes % 256);
+            // Copy pixel at mouse position into buffer.
             commandEncoder.copyTextureToBuffer(
                 { 
                     texture: pickTexture,
@@ -525,16 +531,21 @@ addDescription(
 
             device.queue.submit([commandEncoder.finish()]);
 
+            // Map buffer
             pickBuffer.mapAsync(GPUMapMode.READ).then(() => {
+
+                // Read pixel r, g, b, a
                 const [r, g, b, a] = new Uint8Array(pickBuffer.getMappedRange());
                 pickBuffer.unmap();
 
+                // Decode index.
                 const index = (r | (g << 8) | (b << 16) | (a << 24)) - 1;
 
                 if (lastPickIndex > -1) {
                     device.queue.writeBuffer(boxes[lastPickIndex].drawUniformBuffer, 64, unhighlightColor);
                 }
 
+                // If hovering, update highligh color, cursor.
                 if (index > -1) {
                     device.queue.writeBuffer(boxes[index].drawUniformBuffer, 64, highlightColor);
                     document.body.style.cursor = 'pointer';
@@ -548,16 +559,16 @@ addDescription(
             picked = false;
         }
 
-        // MAIN DRAW
+        ///////////
+        // Draw
+        ///////////
+
         drawRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
         const commandEncoder = device.createCommandEncoder();
         const renderPass = commandEncoder.beginRenderPass(drawRenderPassDescription);
 
         renderPass.setPipeline(drawPipeline);
-
-        // First argument here refers to array index
-        // in pipeline vertexState.vertexBuffers
         renderPass.setVertexBuffer(0, positionBuffer);
         renderPass.setVertexBuffer(1, normalBuffer);
         renderPass.setVertexBuffer(2, uvBuffer);
@@ -568,8 +579,6 @@ addDescription(
         }
 
         renderPass.end();
-        
-
         device.queue.submit([commandEncoder.finish()]);
 
         requestAnimationFrame(draw);
