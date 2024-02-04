@@ -477,12 +477,10 @@ addDescription(
     let mouseX = 0;
     let mouseY = 0;
     let lastPickIndex = -1;
-    let picked = false;
 
     window.addEventListener("mousemove", function(event) {
         mouseX = event.clientX;
         mouseY = event.clientY;
-        picked = true;
     });
         
 
@@ -502,62 +500,63 @@ addDescription(
         // Picking
         //////////////
 
-        if (picked) {
-            const commandEncoder = device.createCommandEncoder();
-            const pickPass = commandEncoder.beginRenderPass(pickRenderPassDescription);
+        
+        const pickCommandEncoder = device.createCommandEncoder();
+        const pickPass = pickCommandEncoder.beginRenderPass(pickRenderPassDescription);
 
-            // Draw all boxes with pick color (index encoded as r, g, b, a).
-            pickPass.setPipeline(pickPipeline);
-            pickPass.setVertexBuffer(0, positionBuffer);
+        // Draw all boxes with pick color (index encoded as r, g, b, a).
+        pickPass.setPipeline(pickPipeline);
+        pickPass.setVertexBuffer(0, positionBuffer);
 
-            for (const box of boxes) {
-                pickPass.setBindGroup(0, box.pickBindGroup);
-                pickPass.draw(numVertices, 1);           
+        for (const box of boxes) {
+            pickPass.setBindGroup(0, box.pickBindGroup);
+            pickPass.draw(numVertices, 1);           
+        }
+
+        pickPass.end();
+        
+        // Copy pixel at mouse position into buffer.
+        pickCommandEncoder.copyTextureToBuffer(
+            { 
+                texture: pickTexture,
+                origin: [mouseX, mouseY]
+            },
+            { 
+                buffer: pickBuffer
+            },
+            [1, 1]
+        );
+
+        device.queue.submit([pickCommandEncoder.finish()]);
+
+        // Map buffer
+        pickBuffer.mapAsync(GPUMapMode.READ).then(() => {
+
+            // Read pixel r, g, b, a
+            const [r, g, b, a] = new Uint8Array(pickBuffer.getMappedRange());
+            pickBuffer.unmap();
+
+            // Decode index.
+            const index = (r | (g << 8) | (b << 16) | (a << 24)) - 1;
+
+            if (index === lastPickIndex) {
+                return;
             }
 
-            pickPass.end();
-            
-            // Copy pixel at mouse position into buffer.
-            commandEncoder.copyTextureToBuffer(
-                { 
-                    texture: pickTexture,
-                    origin: [mouseX, mouseY]
-                },
-                { 
-                    buffer: pickBuffer
-                },
-                [1, 1]
-            );
+            if (lastPickIndex > -1) {
+                device.queue.writeBuffer(boxes[lastPickIndex].drawUniformBuffer, 64, unhighlightColor);
+            }
 
-            device.queue.submit([commandEncoder.finish()]);
+            // If hovering, update highligh color, cursor.
+            if (index > -1) {
+                device.queue.writeBuffer(boxes[index].drawUniformBuffer, 64, highlightColor);
+                document.body.style.cursor = 'pointer';
+            } else {
+                document.body.style.cursor = 'auto';
+            }
 
-            // Map buffer
-            pickBuffer.mapAsync(GPUMapMode.READ).then(() => {
-
-                // Read pixel r, g, b, a
-                const [r, g, b, a] = new Uint8Array(pickBuffer.getMappedRange());
-                pickBuffer.unmap();
-
-                // Decode index.
-                const index = (r | (g << 8) | (b << 16) | (a << 24)) - 1;
-
-                if (lastPickIndex > -1) {
-                    device.queue.writeBuffer(boxes[lastPickIndex].drawUniformBuffer, 64, unhighlightColor);
-                }
-
-                // If hovering, update highligh color, cursor.
-                if (index > -1) {
-                    device.queue.writeBuffer(boxes[index].drawUniformBuffer, 64, highlightColor);
-                    document.body.style.cursor = 'pointer';
-                } else {
-                    document.body.style.cursor = 'auto';
-                }
-
-                lastPickIndex = index;
-            })
-
-            picked = false;
-        }
+            lastPickIndex = index;
+        });
 
         ///////////
         // Draw
@@ -565,8 +564,8 @@ addDescription(
 
         drawRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
-        const commandEncoder = device.createCommandEncoder();
-        const renderPass = commandEncoder.beginRenderPass(drawRenderPassDescription);
+        const drawCommandEncoder = device.createCommandEncoder();
+        const renderPass = drawCommandEncoder.beginRenderPass(drawRenderPassDescription);
 
         renderPass.setPipeline(drawPipeline);
         renderPass.setVertexBuffer(0, positionBuffer);
@@ -579,7 +578,7 @@ addDescription(
         }
 
         renderPass.end();
-        device.queue.submit([commandEncoder.finish()]);
+        device.queue.submit([drawCommandEncoder.finish()]);
 
         requestAnimationFrame(draw);
     }
