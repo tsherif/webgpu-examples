@@ -130,10 +130,10 @@ addDescription(
 
     // UNIFORMS
     let projMatrix = mat4.create();
-    mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 4.0);
+    mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.5, 6.0);
 
     let viewMatrix = mat4.create();
-    let eyePosition = vec3.fromValues(1, 1, 1);
+    let eyePosition = vec3.fromValues(0, 0, 1);
     mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
 
     let viewProjectionMatrix = mat4.create();
@@ -341,7 +341,7 @@ addDescription(
     });
 
     // OBJECT DESCRIPTIONS
-    const boxes = new Array(200).fill(null).map((_, i) => {
+    const boxes = new Array(300).fill(null).map((_, i) => {
         const index = i + 1;
 
         const r =  (index        & 0xFF) / 255;
@@ -405,9 +405,9 @@ addDescription(
 
         return {
                 translate: [
-                    randomRange(-2, 2),
-                    randomRange(-2, 1),
-                    randomRange(-2, 2)
+                    randomRange(-3, 3),
+                    randomRange(-3, 3),
+                    randomRange(-4, 0)
                 ],
                 rotate: [
                     randomRange(0, 2 * Math.PI),
@@ -415,9 +415,9 @@ addDescription(
                     randomRange(0, 2 * Math.PI) 
                 ],
                 scale: [
-                    0.15,
-                    0.15,
-                    0.15
+                    0.25,
+                    0.25,
+                    0.25
                 ],
                 mvpMatrix: mat4.create(),
                 modelMatrix: mat4.create(),
