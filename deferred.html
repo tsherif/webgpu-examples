@@ -30,7 +30,7 @@
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <script type="module">
-import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, xformMatrix, randomRange } from "./utils/utils.js";
+import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, createQuad, xformMatrix, randomRange } from "./utils/utils.js";
 const { mat4, vec3 } = glMatrix;
 
 checkSupport();
@@ -118,6 +118,19 @@ addDescription(
 
     device.queue.writeBuffer(sphere.positions, 0, sphereData.positions);
     device.queue.writeBuffer(sphere.indices, 0, sphereData.indices);
+
+    const quadData = createQuad();
+
+    const quad = {
+        positions: device.createBuffer({
+            size: quadData.positions.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        }),
+        count: quadData.positions.length / 2
+    };
+    
+
+    device.queue.writeBuffer(quad.positions, 0, quadData.positions);
 
     /////////////////////////////////////////
     // Create texture, sampler and load data
@@ -333,7 +346,7 @@ addDescription(
 
             @vertex
             fn vs(@location(0) position: vec4f) -> @builtin(position) vec4f {
-                return lightUniforms.mvpMatrix * position;
+                return position;
             }
 
             @group(0) @binding(2) var textureSampler: sampler;
@@ -374,10 +387,10 @@ addDescription(
             entryPoint: "vs",
             buffers: [
                 {
-                    arrayStride: 12,
+                    arrayStride: 8,
                     attributes: [{
                         shaderLocation: 0,
-                        format: "float32x3",
+                        format: "float32x2",
                         offset: 0
                     }]
                 },
@@ -401,8 +414,8 @@ addDescription(
             }]
         },
         primitive: {
-            topology: "triangle-list",
-            // cullMode: "back"
+            topology: "triangle-strip",
+            cullMode: "back"
         },
         depthStencil: {
             format: "depth24plus",
@@ -578,7 +591,7 @@ addDescription(
             view: context.getCurrentTexture().createView(),
             loadOp: "clear",
             storeOp: "store",
-            clearValue: [0.0, 0, 0.0, 1]
+            clearValue: [0, 0, 0, 1]
         }],
         depthStencilAttachment: {
             view: depthTexture.createView(),
@@ -625,12 +638,11 @@ addDescription(
         const drawRenderPass = commandEncoder.beginRenderPass(drawRenderPassDescription);
 
         drawRenderPass.setPipeline(drawPipeline);
-        drawRenderPass.setVertexBuffer(0, sphere.positions);
-        drawRenderPass.setIndexBuffer(sphere.indices, "uint16");
+        drawRenderPass.setVertexBuffer(0, quad.positions);
 
         for (const light of lights) {
             drawRenderPass.setBindGroup(0, light.bindGroup);
-            drawRenderPass.drawIndexed(sphere.count);           
+            drawRenderPass.draw(quad.count);           
         }
 
         drawRenderPass.end();

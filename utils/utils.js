@@ -295,7 +295,7 @@ export function createSphere(options) {
     let positions = new Float32Array(num_positions * 3);
     let normals = new Float32Array(num_positions * 3);
     let uvs = new Float32Array(num_positions * 2);
-    let indices = new Uint16Array(num_indices);
+    let indices = new Uint32Array(num_indices);
     let x1, x2, x3, x4,
         y1, y2,
         z1, z2, z3, z4,
@@ -389,6 +389,29 @@ export function createSphere(options) {
         uvs,
         indices
     };
+}
+
+export function createQuad() {
+    return {
+        positions: new Float32Array([
+            -1, -1,
+            1, -1,
+            -1, 1,
+            1, 1,
+        ]),
+        normals: new Float32Array([
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1
+        ]),
+        uvs: new Float32Array([
+            0, 0,
+            1, 0,
+            0, 1,
+            1, 1,
+        ])
+    }
 }
 
 export function loadImageBitmaps(urls) {
