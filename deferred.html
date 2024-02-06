@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="css/example.css">
+    <script src="utils/gl-matrix.js"></script>
+</head>
+<!--
+  The MIT License (MIT)
+
+  Copyright (c) 2020 Tarek Sherif
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of
+  this software and associated documentation files (the "Software"), to deal in
+  the Software without restriction, including without limitation the rights to
+  use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+  the Software, and to permit persons to whom the Software is furnished to do so,
+  subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+  FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+  COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+  IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+-->
+<body>
+<canvas id="webgpu-canvas"></canvas>
+<script type="module">
+import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, xformMatrix, randomRange } from "./utils/utils.js";
+const { mat4, vec3 } = glMatrix;
+
+checkSupport();
+addDescription(
+    "Deferred Rendering",
+    "Interact with rendered objects using color picking.",
+    "pick.html"
+);
+
+(async () => {
+    //////////////////////////////////////////
+    // Set up WebGPU adapter, load
+    // texture image
+    //////////////////////////////////////////
+
+    const [adapter, [image]] = await Promise.all([
+        navigator.gpu.requestAdapter(),
+        loadImageBitmaps(["img/webgpu.png"])
+    ]);
+
+    const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+
+    ////////////////////////////////////
+    // Set up device and canvas context
+    ////////////////////////////////////
+
+    const device = await adapter.requestDevice({
+        requiredLimits: {
+            maxColorAttachmentBytesPerSample: 40
+        },
+        requiredFeatures: ["float32-filterable"]
+    });
+    
+    const canvas = document.getElementById("webgpu-canvas");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const context = canvas.getContext("webgpu");
+    context.configure({
+        device,
+        format: presentationFormat
+    });
+
+    ////////////////////////////////////////
+    // Create vertex buffers and load data
+    ////////////////////////////////////////
+
+    const cubeData = createCube();
+
+    const cube = {
+        positions: device.createBuffer({
+            size: cubeData.positions.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        }),
+        normals: device.createBuffer({
+            size: cubeData.normals.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        }),
+        uvs: device.createBuffer({
+            size: cubeData.uvs.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        }),
+        count: cubeData.positions.length / 3
+    };
+    
+
+    device.queue.writeBuffer(cube.positions, 0, cubeData.positions);
+    device.queue.writeBuffer(cube.normals, 0, cubeData.normals);
+    device.queue.writeBuffer(cube.uvs, 0, cubeData.uvs);
+
+    const sphereData = createSphere();
+
+    const sphere = {
+        positions: device.createBuffer({
+            size: sphereData.positions.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        }),
+        indices: device.createBuffer({
+            size: sphereData.indices.byteLength,
+            usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
+        }),
+        count: sphereData.indices.length
+    };
+    
+
+    device.queue.writeBuffer(sphere.positions, 0, sphereData.positions);
+    device.queue.writeBuffer(sphere.indices, 0, sphereData.indices);
+
+    /////////////////////////////////////////
+    // Create texture, sampler and load data
+    //////////////////////////////////////////
+
+    const sampler = device.createSampler({
+        minFilter: "linear",
+        magFilter: "linear"
+    });
+
+    const colorTexture = device.createTexture({
+        size: [image.width, image.height],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    device.queue.copyExternalImageToTexture(
+        { source: image, flipY: true },
+        { texture: colorTexture },
+        {
+            width: image.width,
+            height: image.height
+        }
+    );
+
+    ///////////////////////
+    // Uniform values
+    ////////////////////////
+    const projMatrix = mat4.create();
+    mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0);
+
+    const viewMatrix = mat4.create();
+    const eyePosition = vec3.fromValues(1, 1, 1);
+    mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
+
+    const viewProjectionMatrix = mat4.create();
+    mat4.multiply(viewProjectionMatrix, projMatrix, viewMatrix);
+
+    /////////////////////
+    // Geo pipeline
+    /////////////////////
+
+    const positionTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rgba32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    const normalTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rgba32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    const uvTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rg32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    // Scene uniforms that are only set once.
+    const geoSceneUniformBuffer = device.createBuffer({
+        size: 64,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(geoSceneUniformBuffer, 0, viewProjectionMatrix);
+
+    const geoShaderModule = device.createShaderModule({
+        label: 'geo shader',
+        code: `
+
+            struct SceneUniforms {
+                viewProjectionMatrix: mat4x4f,
+            };
+
+            struct ObjectUniforms {
+                worldMatrix: mat4x4f,
+            };
+
+            struct VSOut {
+                @builtin(position) clipPosition: vec4f,
+                @location(0) worldPosition: vec3f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f,
+            };
+
+            @group(0) @binding(0) var<uniform> sceneUniforms: SceneUniforms;
+            @group(0) @binding(1) var<uniform> objectUniforms: ObjectUniforms;
+
+            @vertex
+            fn vs(
+                @location(0) position: vec4f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f,
+            ) -> VSOut {
+                let worldPosition: vec4f = objectUniforms.worldMatrix * position;
+
+                var vsOut: VSOut;
+                vsOut.clipPosition = sceneUniforms.viewProjectionMatrix * worldPosition;
+                vsOut.worldPosition = worldPosition.xyz;
+                vsOut.normal = (objectUniforms.worldMatrix * vec4f(normal, 0.0)).xyz;
+                vsOut.uv = uv;
+
+                return vsOut;
+            }
+
+            struct FSOut {
+                @location(0) position: vec4f,
+                @location(1) normal: vec4f,
+                @location(2) uv: vec2f,
+            }
+
+            @fragment
+            fn fs(fsIn: VSOut) -> FSOut {
+                var fsOut: FSOut;
+                fsOut.position = vec4f(fsIn.worldPosition, 1.0);
+                fsOut.normal = vec4f(fsIn.normal, 0.0);
+                fsOut.uv = fsIn.uv;
+
+                return fsOut;
+            }
+
+        `
+    });
+
+    const geoPipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+            module: geoShaderModule,
+            entryPoint: "vs",
+            buffers: [
+                {
+                    arrayStride: 12,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float32x3",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 12,
+                    attributes: [{
+                        shaderLocation: 1,
+                        format: "float32x3",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 2,
+                        format: "float32x2",
+                        offset: 0
+                    }]
+                }
+            ]
+        },
+        fragment: {
+            module: geoShaderModule,
+            entryPoint: "fs",
+
+            targets: [
+                {
+                    format: "rgba32float"
+                },
+                {
+                    format: "rgba32float"
+                },
+                {
+                    format: "rg32float"
+                }
+            ]
+        },
+        primitive: {
+            topology: "triangle-list",
+            cullMode: "back"
+        },
+        depthStencil: {
+            format: "depth24plus",
+            depthWriteEnabled: true,
+            depthCompare: "less"
+        }
+    });
+
+    ///////////////////
+    // Draw pipeline
+    ///////////////////
+
+    // Scene uniforms that are only set once.
+    const drawSceneUniformBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(drawSceneUniformBuffer, 0, eyePosition);
+
+    const drawShaderModule = device.createShaderModule({
+        code: `
+            
+            struct SceneUniforms {
+                eyePosition: vec4f,
+            };
+
+            struct LightUniforms {
+                mvpMatrix: mat4x4f,
+                position: vec4f,
+                color: vec4f
+            }; 
+
+            @group(0) @binding(0) var<uniform> sceneUniforms: SceneUniforms;
+            @group(0) @binding(1) var<uniform> lightUniforms: LightUniforms;
+
+            @vertex
+            fn vs(@location(0) position: vec4f) -> @builtin(position) vec4f {
+                return lightUniforms.mvpMatrix * position;
+            }
+
+            @group(0) @binding(2) var textureSampler: sampler;
+            @group(0) @binding(3) var positionTexture: texture_2d<f32>;
+            @group(0) @binding(4) var normalTexture: texture_2d<f32>;
+            @group(0) @binding(5) var uvTexture: texture_2d<f32>;
+            @group(0) @binding(6) var colorTexture: texture_2d<f32>;
+
+            @fragment
+            fn fs(@builtin(position) canvasPosition: vec4f) -> @location(0) vec4f {
+                let index = vec2u(canvasPosition.xy);
+                let position = textureLoad(positionTexture, index, 0).xyz;
+                let normal = normalize(textureLoad(normalTexture, index, 0).xyz);
+                let uv = textureLoad(uvTexture, index, 0).xy;
+
+                let surfaceColor: vec3f = textureSample(colorTexture, textureSampler, uv).rgb;
+
+                let eyeDirection: vec3f = normalize(sceneUniforms.eyePosition.xyz - position);
+                let lightVec: vec3f = lightUniforms.position.xyz - position;
+                let attenuation: f32 = 1.0 - length(lightVec);
+                let lightDirection = normalize(lightVec);
+                let reflectionDirection = reflect(-lightDirection, normal);
+                let nDotL: f32 = max(dot(lightDirection, normal), 0.0);
+                let diffuse: vec3f = nDotL * lightUniforms.color.rgb;
+                let ambient: f32 = 0.1;
+                let specular: vec3f = pow(max(dot(reflectionDirection, eyeDirection), 0.0), 20.0) * lightUniforms.color.rgb;
+
+                return vec4f(attenuation * surfaceColor * (diffuse + specular + ambient), 1.0);
+            }
+
+        `
+    });
+
+    const drawPipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+            module: drawShaderModule,
+            entryPoint: "vs",
+            buffers: [
+                {
+                    arrayStride: 12,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float32x3",
+                        offset: 0
+                    }]
+                },
+            ]
+        },
+        fragment: {
+            module: drawShaderModule,
+            entryPoint: "fs",
+            targets: [{
+                format: presentationFormat,
+                blend: {
+                    color: {
+                        srcFactor: "one",
+                        dstFactor: "one"
+                    },
+                    alpha: {
+                        srcFactor: "one",
+                        dstFactor: "one"
+                    }
+                }
+            }]
+        },
+        primitive: {
+            topology: "triangle-list",
+            // cullMode: "back"
+        },
+        depthStencil: {
+            format: "depth24plus",
+            depthWriteEnabled: false,
+            depthCompare: "less"
+        }
+    });
+
+    const boxes = [
+        {
+            scale: [1, 1, 1],
+            rotate: [0, 0, 0],
+            translate: [0, 0, 0],
+        },
+        {
+            scale: [0.1, 0.1, 0.1],
+            rotate: [0, 0, Math.PI / 3],
+            translate: [0.8, 0.8, 0.4],
+        }
+    ].map(({ scale, rotate, translate}) => {
+        const uniformBuffer = device.createBuffer({
+            size: 64,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+       
+        const bindGroup = device.createBindGroup({
+            layout: geoPipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: geoSceneUniformBuffer
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: uniformBuffer
+                    }
+                }
+            ]
+        });
+
+        return {
+            translate,
+            rotate,
+            scale,
+            modelMatrix: mat4.create(),
+            uniformBuffer,
+            bindGroup
+        };
+    });
+
+    const lights = [
+        {
+            position: [0, 1, 0.5],
+            color:    [0.8, 0.0, 0.0],
+        },
+        {
+            position: [1, 1, 0.5],
+            color:    [0.0, 0.0, 0.8],
+        },
+        {
+            position: [1, 0, 0.5],
+            color:    [0.0, 0.8, 0.0],
+        },
+        {
+            position: [0.5, 0, 1],
+            color:    [0.0, 0.8, 0.8],
+        }
+    ].map(({ position, color }) => {
+        const modelMatrix = mat4.create();
+        xformMatrix(modelMatrix, position, null, null);
+
+        const mvpMatrix = mat4.create();
+        mat4.multiply(mvpMatrix, viewProjectionMatrix, modelMatrix);
+        
+        
+        const uniformBuffer = device.createBuffer({
+            size: 96,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
+        device.queue.writeBuffer(uniformBuffer, 0, mvpMatrix);
+        device.queue.writeBuffer(uniformBuffer, 64, new Float32Array(position));
+        device.queue.writeBuffer(uniformBuffer, 80, new Float32Array(color));
+       
+        const bindGroup = device.createBindGroup({
+            layout: drawPipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: drawSceneUniformBuffer
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: uniformBuffer
+                    }
+                },
+                {
+                    binding: 2,
+                    resource: sampler
+                },
+                {
+                    binding: 3,
+                    resource: positionTexture.createView()
+                },
+                {
+                    binding: 4,
+                    resource: normalTexture.createView()
+                },
+                {
+                    binding: 5,
+                    resource: uvTexture.createView()
+                },
+                {
+                    binding: 6,
+                    resource: colorTexture.createView()
+                }
+            ]
+        });
+
+        return {
+            uniformBuffer,
+            bindGroup
+        };
+    });
+
+    ///////////////////////////
+    // Render pass description
+    ///////////////////////////
+    
+    const depthTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "depth24plus",
+        usage:  GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    const geoRenderPassDescription = {
+        colorAttachments: [
+            {
+                view: positionTexture.createView(),
+                loadOp: "clear",
+                storeOp: "store",
+                clearValue: [0, 0, 0, 0]
+            },
+            {
+                view: normalTexture.createView(),
+                loadOp: "clear",
+                storeOp: "store",
+                clearValue: [0, 0, 0, 0]
+            },
+            {
+                view: uvTexture.createView(),
+                loadOp: "clear",
+                storeOp: "store",
+                clearValue: [0, 0, 0, 0]
+            }
+        ],
+        depthStencilAttachment: {
+            view: depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: "clear",
+            depthStoreOp: "store"
+        }
+    };
+
+    const drawRenderPassDescription = {
+        colorAttachments: [{
+            view: context.getCurrentTexture().createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: [0.0, 0, 0.0, 1]
+        }],
+        depthStencilAttachment: {
+            view: depthTexture.createView(),
+            depthReadOnly: true
+        }
+    };
+
+    function draw() {
+        for (const box of boxes) {
+            box.rotate[0] += 0.005;
+            box.rotate[1] += 0.01;
+
+            xformMatrix(box.modelMatrix, box.translate, box.rotate, box.scale);
+            
+            device.queue.writeBuffer(box.uniformBuffer, 0, box.modelMatrix);
+        }
+
+        //////////////
+        // Geo
+        //////////////
+
+
+        const commandEncoder = device.createCommandEncoder();
+        const geoPass = commandEncoder.beginRenderPass(geoRenderPassDescription);
+
+        geoPass.setPipeline(geoPipeline);
+        geoPass.setVertexBuffer(0, cube.positions);
+        geoPass.setVertexBuffer(1, cube.normals);
+        geoPass.setVertexBuffer(2, cube.uvs);
+
+        for (const box of boxes) {
+            geoPass.setBindGroup(0, box.bindGroup);
+            geoPass.draw(cube.count);           
+        }
+
+        geoPass.end();
+
+        ///////////
+        // Draw
+        ///////////
+
+        drawRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
+
+        const drawRenderPass = commandEncoder.beginRenderPass(drawRenderPassDescription);
+
+        drawRenderPass.setPipeline(drawPipeline);
+        drawRenderPass.setVertexBuffer(0, sphere.positions);
+        drawRenderPass.setIndexBuffer(sphere.indices, "uint16");
+
+        for (const light of lights) {
+            drawRenderPass.setBindGroup(0, light.bindGroup);
+            drawRenderPass.drawIndexed(sphere.count);           
+        }
+
+        drawRenderPass.end();
+
+        device.queue.submit([commandEncoder.finish()]);
+
+        requestAnimationFrame(draw);
+    }
+
+    requestAnimationFrame(draw);
+
+
+})();
+</script>
+</body>
+</html>

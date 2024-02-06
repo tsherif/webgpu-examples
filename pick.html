@@ -219,14 +219,14 @@ addDescription(
     ///////////////////
 
     // Scene uniforms that are only set once.
-    const scenUniformBuffer = device.createBuffer({
+    const sceneUniformBuffer = device.createBuffer({
         size: 96,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    device.queue.writeBuffer(scenUniformBuffer, 0, viewProjectionMatrix);
-    device.queue.writeBuffer(scenUniformBuffer, 64, eyePosition);
-    device.queue.writeBuffer(scenUniformBuffer, 80, lightPosition);
+    device.queue.writeBuffer(sceneUniformBuffer, 0, viewProjectionMatrix);
+    device.queue.writeBuffer(sceneUniformBuffer, 64, eyePosition);
+    device.queue.writeBuffer(sceneUniformBuffer, 80, lightPosition);
 
     const drawShaderModule = device.createShaderModule({
         code: `
@@ -242,7 +242,7 @@ addDescription(
                 highlightColor: vec4f
             };
 
-            struct VSOut{
+            struct VSOut {
                 @builtin(position) clipPosition: vec4f,
                 @location(0) worldPosition: vec3f,
                 @location(1) normal: vec3f,
@@ -387,7 +387,7 @@ addDescription(
                 {
                     binding: 0,
                     resource: {
-                        buffer: scenUniformBuffer
+                        buffer: sceneUniformBuffer
                     }
                 },
                 {
@@ -409,28 +409,28 @@ addDescription(
         });
 
         return {
-                translate: [
-                    randomRange(-3, 3),
-                    randomRange(-3, 3),
-                    randomRange(-4, 0)
-                ],
-                rotate: [
-                    randomRange(0, 2 * Math.PI),
-                    randomRange(0, 2 * Math.PI),
-                    randomRange(0, 2 * Math.PI) 
-                ],
-                scale: [
-                    0.25,
-                    0.25,
-                    0.25
-                ],
-                mvpMatrix: mat4.create(),
-                modelMatrix: mat4.create(),
-                pickUniformBuffer,
-                pickBindGroup,
-                drawUniformBuffer,
-                drawBindGroup
-            };
+            translate: [
+                randomRange(-3, 3),
+                randomRange(-3, 3),
+                randomRange(-4, 0)
+            ],
+            rotate: [
+                randomRange(0, 2 * Math.PI),
+                randomRange(0, 2 * Math.PI),
+                randomRange(0, 2 * Math.PI) 
+            ],
+            scale: [
+                0.25,
+                0.25,
+                0.25
+            ],
+            mvpMatrix: mat4.create(),
+            modelMatrix: mat4.create(),
+            pickUniformBuffer,
+            pickBindGroup,
+            drawUniformBuffer,
+            drawBindGroup
+        };
     });
 
     ///////////////////////////
@@ -446,14 +446,14 @@ addDescription(
     const pickRenderPassDescription = {
         colorAttachments: [{
             view: pickTexture.createView(),
-            loadOp: 'clear',
-            storeOp: 'store',
+            loadOp: "clear",
+            storeOp: "store",
             clearValue: [0, 0, 0, 0]
         }],
         depthStencilAttachment: {
             view: depthTexture.createView(),
             depthClearValue: 1,
-            depthLoadOp: 'clear',
+            depthLoadOp: "clear",
             depthStoreOp: "store"
         }
     };
@@ -461,14 +461,14 @@ addDescription(
     const drawRenderPassDescription = {
         colorAttachments: [{
             view: context.getCurrentTexture().createView(),
-            loadOp: 'clear',
-            storeOp: 'store',
+            loadOp: "clear",
+            storeOp: "store",
             clearValue: [0, 0, 0, 1]
         }],
         depthStencilAttachment: {
             view: depthTexture.createView(),
             depthClearValue: 1,
-            depthLoadOp: 'clear',
+            depthLoadOp: "clear",
             depthStoreOp: "store"
         }
     };
@@ -510,7 +510,7 @@ addDescription(
 
         for (const box of boxes) {
             pickPass.setBindGroup(0, box.pickBindGroup);
-            pickPass.draw(numVertices, 1);           
+            pickPass.draw(numVertices);           
         }
 
         pickPass.end();
@@ -574,7 +574,7 @@ addDescription(
 
         for (const box of boxes) {
             renderPass.setBindGroup(0, box.drawBindGroup);
-            renderPass.draw(numVertices, 1);           
+            renderPass.draw(numVertices);           
         }
 
         renderPass.end();

@@ -385,7 +385,7 @@ addDescription(
             // in pipeline layout.bindGroupLayouts
             renderPass.setBindGroup(0, c.bindGroup);
             
-            renderPass.draw(numVertices, 1, 0, 0);
+            renderPass.draw(numVertices);
             renderPass.end();
         });
 

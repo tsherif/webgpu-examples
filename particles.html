@@ -307,13 +307,15 @@ addDescription(
             entryPoint: "fs",
             targets: [{
                 format: presentationFormat,
-                colorBlend: {
-                    srcFactor: "one",
-                    dstFactor: "one-minus-src-alpha"
-                },
-                alphaBlend: {
-                    srcFactor: "one",
-                    dstFactor: "one-minus-src-alpha"
+                blend: {
+                    color: {
+                        srcFactor: "one",
+                        dstFactor: "one-minus-src-alpha"
+                    },
+                    alpha: {
+                        srcFactor: "one",
+                        dstFactor: "one-minus-src-alpha"
+                    }
                 }
             }]
         },
