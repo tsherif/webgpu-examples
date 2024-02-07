@@ -163,13 +163,14 @@ addDescription(
     mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0);
 
     const viewMatrix = mat4.create();
-    const eyePosition = vec3.fromValues(1, 1, 1);
+    const eyePosition = vec3.fromValues(0, 0, 1);
     mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
 
     const viewProjectionMatrix = mat4.create();
     mat4.multiply(viewProjectionMatrix, projMatrix, viewMatrix);
 
-    const NUM_LIGHTS = 4;
+    const NUM_BOXES = 256;
+    const NUM_LIGHTS = 256;
 
     /////////////////////
     // Geo pipeline
@@ -358,25 +359,32 @@ addDescription(
             @fragment
             fn fs(@builtin(position) canvasPosition: vec4f) -> @location(0) vec4f {
                 let index = vec2u(canvasPosition.xy);
-                let position = textureLoad(positionTexture, index, 0).xyz;
+                let positionSample = textureLoad(positionTexture, index, 0);
                 let normal = normalize(textureLoad(normalTexture, index, 0).xyz);
                 let uv = textureLoad(uvTexture, index, 0).xy;
 
                 let surfaceColor: vec3f = textureSample(colorTexture, textureSampler, uv).rgb;
 
+                if (positionSample.w == 0.0) {
+                    discard;
+                }
+
+                let position = positionSample.xyz;
+
                 let eyeDirection: vec3f = normalize(sceneUniforms.eyePosition.xyz - position);
-                var color = vec3f(0.0, 0.0, 0.0);
+                let ambient: f32 = 0.0;
+                var color = vec3f(ambient);
 
                 for (var i = 0; i < ${NUM_LIGHTS}; i++) {
                     let lightVec: vec3f = lightUniforms[i].position.xyz - position;
-                    let attenuation: f32 = 1.0 - length(lightVec);
                     let lightDirection = normalize(lightVec);
                     let reflectionDirection = reflect(-lightDirection, normal);
                     let nDotL: f32 = max(dot(lightDirection, normal), 0.0);
                     let diffuse: vec3f = nDotL * lightUniforms[i].color.rgb;
-                    let ambient: f32 = 0.1;
                     let specular: vec3f = pow(max(dot(reflectionDirection, eyeDirection), 0.0), 20.0) * lightUniforms[i].color.rgb;
-                    color += attenuation * surfaceColor * (diffuse + specular + ambient);
+                    let lightDistance: f32 = length(lightVec);
+                    let attenuation: f32 = 1.0 / (lightDistance * lightDistance);
+                    color += attenuation * surfaceColor * (diffuse + specular);
                 }
 
                 return vec4f(color, 1.0);
@@ -429,18 +437,23 @@ addDescription(
         }
     });
 
-    const boxes = [
-        {
-            scale: [1, 1, 1],
-            rotate: [0, 0, 0],
-            translate: [0, 0, 0],
-        },
-        {
-            scale: [0.1, 0.1, 0.1],
-            rotate: [0, 0, Math.PI / 3],
-            translate: [0.8, 0.8, 0.4],
-        }
-    ].map(({ scale, rotate, translate}) => {
+    const boxes = new Array(NUM_BOXES).fill(null).map(() => {
+        const translate = [
+            randomRange(-3, 3),
+            randomRange(-3, 3),
+            randomRange(-4, 0)
+        ];
+        const rotate = [
+                randomRange(0, 2 * Math.PI),
+                randomRange(0, 2 * Math.PI),
+                randomRange(0, 2 * Math.PI) 
+        ];
+        const scale = [
+            0.25,
+            0.25,
+            0.25
+        ];
+
         const uniformBuffer = device.createBuffer({
             size: 64,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -474,24 +487,18 @@ addDescription(
         };
     });
 
-    const lightsData = [
-        {
-            position: [0, 1, 0.5],
-            color:    [0.8, 0.0, 0.0],
-        },
-        {
-            position: [1, 1, 0.5],
-            color:    [0.0, 0.0, 0.8],
-        },
-        {
-            position: [1, 0, 0.5],
-            color:    [0.0, 0.8, 0.0],
-        },
-        {
-            position: [0.5, 0, 1],
-            color:    [0.0, 0.8, 0.8],
-        }
-    ];
+    const lightsData = new Array(NUM_LIGHTS).fill(null).map(() => ({
+        position: [
+            randomRange(-5, 5),
+            randomRange(-5, 5),
+            randomRange(-6, 0)
+        ],
+        color: [
+            randomRange(0, 0.1),
+            randomRange(0, 0.1),
+            randomRange(0, 0.1)
+        ]
+    }));
     const lightsUniformBufferData = new Float32Array(lightsData.length * 8);
     const lightsUniformBuffer = device.createBuffer({
         size: lightsUniformBufferData.byteLength,
