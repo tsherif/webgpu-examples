@@ -33,11 +33,14 @@
 import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, createQuad, xformMatrix, randomRange } from "./utils/utils.js";
 const { mat4, vec3 } = glMatrix;
 
+const NUM_BOXES = 256;
+const NUM_LIGHTS = 512;
+
 checkSupport();
 addDescription(
     "Deferred Rendering",
-    "Interact with rendered objects using color picking.",
-    "pick.html"
+    `Rendering ${NUM_BOXES} boxes to a gBuffer and animationg ${NUM_LIGHTS} lights.`,
+    "deferred.html"
 );
 
 (async () => {
@@ -168,9 +171,6 @@ addDescription(
 
     const viewProjectionMatrix = mat4.create();
     mat4.multiply(viewProjectionMatrix, projMatrix, viewMatrix);
-
-    const NUM_BOXES = 256;
-    const NUM_LIGHTS = 256;
 
     /////////////////////
     // Geo pipeline
@@ -493,7 +493,13 @@ addDescription(
             randomRange(0, 0.1),
             randomRange(0, 0.1),
             randomRange(0, 0.1)
-        ]
+        ],
+        offset: [
+            randomRange(-3, 3),
+            randomRange(-3, 3),
+            randomRange(-3, 3)
+        ],
+        t: randomRange(0, 2 * Math.PI),
     }));
     const lightPositionsBufferData = new Float32Array(lights.length * 4);
     const lightPositionsBuffer = device.createBuffer({
@@ -614,8 +620,8 @@ addDescription(
 
     function draw() {
         for (const box of boxes) {
-            box.rotate[0] += 0.005;
-            box.rotate[1] += 0.01;
+            box.rotate[0] += 0.0005;
+            box.rotate[1] += 0.001;
 
             xformMatrix(box.modelMatrix, box.translate, box.rotate, box.scale);
             
@@ -645,6 +651,15 @@ addDescription(
         ///////////
         // Draw
         ///////////
+
+        lights.forEach((light, i) => {
+            light.t = (light.t + 0.002) % (2 * Math.PI);
+            const position = lightPositionsBufferData.subarray(i * 4, i * 4 + 3);
+            vec3.scale(position, light.offset, Math.sin(light.t));
+            vec3.add(position, light.position, position);
+        });
+
+        device.queue.writeBuffer(lightPositionsBuffer, 0, lightPositionsBufferData);
 
         drawRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
