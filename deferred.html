@@ -176,6 +176,8 @@ addDescription(
     const viewProjectionMatrix = mat4.create();
     mat4.multiply(viewProjectionMatrix, projMatrix, viewMatrix);
 
+    // Uniform buffer for view projection matrix
+    // used in lights and gBuffer passes
     const viewProjectionMatrixBuffer = device.createBuffer({
         size: 64,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -183,50 +185,13 @@ addDescription(
 
     device.queue.writeBuffer(viewProjectionMatrixBuffer, 0, viewProjectionMatrix);
 
-    const lightsData = new Array(NUM_LIGHTS).fill(null).map(() => ({
-        position: [
-            randomRange(-5, 5),
-            randomRange(-5, 5),
-            randomRange(-6, 0)
-        ],
-        color: [
-            randomRange(0, 0.1),
-            randomRange(0, 0.1),
-            randomRange(0, 0.1)
-        ],
-        offset: [
-            randomRange(-1, 1),
-            randomRange(-1, 1),
-            randomRange(-1, 1)
-        ],
-        t: randomRange(0, 2 * Math.PI),
-    }));
-
-    const lightPositionsBufferData = new Float32Array(lightsData.length * 4);
-    const lightPositionsBuffer = device.createBuffer({
-        size: lightPositionsBufferData.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-    const lightColorsBufferData = new Float32Array(lightsData.length * 4);
-    const lightColorsBuffer = device.createBuffer({
-        size: lightColorsBufferData.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    lightsData.forEach((data, i) => {
-        const index = i * 4;
-        lightPositionsBufferData.set(data.position, index);
-        lightColorsBufferData.set(data.color, index);
-    });
-
-    device.queue.writeBuffer(lightPositionsBuffer, 0, lightPositionsBufferData);
-    device.queue.writeBuffer(lightColorsBuffer, 0, lightColorsBufferData);
 
     ///////////////////////////////
-    // Lights pipeline
+    // Lights pass
     // (Render lights as spheres)
     ///////////////////////////////
 
+    // Shader module
     const lightsShaderModule = device.createShaderModule({
         label: 'lights shader',
         code: `
@@ -262,6 +227,7 @@ addDescription(
         `
     });
 
+    // Pipeline
     const lightsPipeline = device.createRenderPipeline({
         label: 'lights pipeline',
         layout: 'auto',
@@ -318,23 +284,64 @@ addDescription(
         }
     });
 
-    const lightsBindGroup = device.createBindGroup({
-        layout: lightsPipeline.getBindGroupLayout(0),
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: viewProjectionMatrixBuffer
+    // Objects
+    const lights = {
+        data: new Array(NUM_LIGHTS).fill(null).map(() => ({
+            position: [
+                randomRange(-4, 4),
+                randomRange(-4, 4),
+                randomRange(-4, 1)
+            ],
+            color: [
+                randomRange(0, 1),
+                randomRange(0, 1),
+                randomRange(0, 1)
+            ],
+            offset: [
+                randomRange(-1, 1),
+                randomRange(-1, 1),
+                randomRange(-1, 1)
+            ],
+            t: randomRange(0, 2 * Math.PI),
+        })),
+        positionData: new Float32Array(NUM_LIGHTS * 4),
+        positions: device.createBuffer({
+            size: NUM_LIGHTS * 4 * Float32Array.BYTES_PER_ELEMENT,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        }),
+        colorData: new Float32Array(NUM_LIGHTS * 4),
+        colors: device.createBuffer({
+            size: NUM_LIGHTS * 4 * Float32Array.BYTES_PER_ELEMENT,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        }),
+        bindGroup: device.createBindGroup({
+            layout: lightsPipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: viewProjectionMatrixBuffer
+                    }
                 }
-            }
-        ]
+            ]
+        })
+    };
+    
+    lights.data.forEach((data, i) => {
+        const index = i * 4;
+        lights.positionData.set(data.position, index);
+        lights.colorData.set(data.color, index);
     });
 
+    device.queue.writeBuffer(lights.positions, 0, lights.positionData);
+    device.queue.writeBuffer(lights.colors, 0, lights.colorData);
+
     ////////////////////////////
-    // Geo pipeline
+    // GBuffer pass
     // (Draw boxes to gBuffer)
     ////////////////////////////
 
+    // Render targets
     const positionTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "rgba32float",
@@ -353,8 +360,9 @@ addDescription(
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
     });    
 
+    // Shader module
     const gBufferShaderModule = device.createShaderModule({
-        label: 'gBuffer shader',
+        label: 'gbuffer shader',
         code: `
             struct VSOut {
                 @builtin(position) clipPosition: vec4f,
@@ -402,6 +410,7 @@ addDescription(
         `
     });
 
+    // Pipeline 
     const gBufferPipeline = device.createRenderPipeline({
         label: 'gbuffer pipeline',
         layout: 'auto',
@@ -462,103 +471,7 @@ addDescription(
         }
     });
 
-    ///////////////////////////////////////
-    // Lighting pipeline
-    // (Apply lighting to datain gBuffer)
-    ///////////////////////////////////////
-
-    // Scene uniforms that are only set once.
-    const eyePositionBuffer = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    device.queue.writeBuffer(eyePositionBuffer, 0, eyePosition);
-
-    const lightingShaderModule = device.createShaderModule({
-        code: `
-
-            @vertex
-            fn vs(@location(0) position: vec4f) -> @builtin(position) vec4f {
-                return position;
-            }
-
-            @group(0) @binding(0) var<uniform>  eyePosition: vec4f;
-            @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
-            @group(0) @binding(2) var<uniform> lightColors: array<vec4f, ${NUM_LIGHTS}>;
-            @group(0) @binding(3) var textureSampler: sampler;
-            @group(0) @binding(4) var positionTexture: texture_2d<f32>;
-            @group(0) @binding(5) var normalTexture: texture_2d<f32>;
-            @group(0) @binding(6) var uvTexture: texture_2d<f32>;
-            @group(0) @binding(7) var colorTexture: texture_2d<f32>;
-
-            @fragment
-            fn fs(@builtin(position) canvasPosition: vec4f) -> @location(0) vec4f {
-                let index = vec2u(canvasPosition.xy);
-                let positionSample = textureLoad(positionTexture, index, 0);
-                let normal = normalize(textureLoad(normalTexture, index, 0).xyz);
-                let uv = textureLoad(uvTexture, index, 0).xy;
-
-                let surfaceColor: vec3f = textureSample(colorTexture, textureSampler, uv).rgb;
-
-                if (positionSample.w == 0.0) {
-                    discard;
-                }
-
-                let position = positionSample.xyz;
-
-                let eyeDirection: vec3f = normalize(eyePosition.xyz - position);
-                let ambient: f32 = 0.0;
-                var color = vec3f(ambient);
-
-                for (var i = 0; i < ${NUM_LIGHTS}; i++) {
-                    let lightVec: vec3f = lightPositions[i].xyz - position;
-                    let lightDirection = normalize(lightVec);
-                    let reflectionDirection = reflect(-lightDirection, normal);
-                    let nDotL: f32 = max(dot(lightDirection, normal), 0.0);
-                    let diffuse: vec3f = nDotL * lightColors[i].rgb;
-                    let specular: vec3f = pow(max(dot(reflectionDirection, eyeDirection), 0.0), 20.0) * lightColors[i].rgb;
-                    let lightDistance: f32 = length(lightVec);
-                    let attenuation: f32 = 1.0 / (lightDistance * lightDistance);
-                    color += attenuation * surfaceColor * (diffuse + specular);
-                }
-
-                return vec4f(color, 1.0);
-            }
-
-        `
-    });
-
-    const lightingPipeline = device.createRenderPipeline({
-        label: 'lighting pipeline',
-        layout: 'auto',
-        vertex: {
-            module: lightingShaderModule,
-            entryPoint: "vs",
-            buffers: [
-                {
-                    arrayStride: 8,
-                    attributes: [{
-                        shaderLocation: 0,
-                        format: "float32x2",
-                        offset: 0
-                    }]
-                },
-            ]
-        },
-        fragment: {
-            module: lightingShaderModule,
-            entryPoint: "fs",
-            targets: [{
-                format: presentationFormat,
-            }],
-        },
-        primitive: {
-            topology: "triangle-strip",
-            cullMode: "back"
-        }
-    });
-
+    // Objects
     const boxes = new Array(NUM_BOXES).fill(null).map(() => {
         const translate = [
             randomRange(-3, 3),
@@ -609,6 +522,110 @@ addDescription(
         };
     });
 
+    /////////////////////////////////////////
+    // Lighting pass
+    // (Render a full-screen quad and apply
+    //  lighting to data in gBuffer)
+    /////////////////////////////////////////
+
+    // Uniforms
+    const eyePositionBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(eyePositionBuffer, 0, eyePosition);
+
+    // Shader module
+    const lightingShaderModule = device.createShaderModule({
+        code: `
+
+            @vertex
+            fn vs(@location(0) position: vec4f) -> @builtin(position) vec4f {
+                return position;
+            }
+
+            const lightDampening = 0.06;
+
+            @group(0) @binding(0) var<uniform>  eyePosition: vec4f;
+            @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
+            @group(0) @binding(2) var<uniform> lightColors: array<vec4f, ${NUM_LIGHTS}>;
+            @group(0) @binding(3) var textureSampler: sampler;
+            @group(0) @binding(4) var positionTexture: texture_2d<f32>;
+            @group(0) @binding(5) var normalTexture: texture_2d<f32>;
+            @group(0) @binding(6) var uvTexture: texture_2d<f32>;
+            @group(0) @binding(7) var colorTexture: texture_2d<f32>;
+
+            @fragment
+            fn fs(@builtin(position) canvasPosition: vec4f) -> @location(0) vec4f {
+                let index = vec2u(canvasPosition.xy);
+                let positionSample = textureLoad(positionTexture, index, 0);
+                let normal = normalize(textureLoad(normalTexture, index, 0).xyz);
+                let uv = textureLoad(uvTexture, index, 0).xy;
+
+                let surfaceColor: vec3f = textureSample(colorTexture, textureSampler, uv).rgb;
+
+                if (positionSample.w == 0.0) {
+                    discard;
+                }
+
+                let position = positionSample.xyz;
+
+                let eyeDirection: vec3f = normalize(eyePosition.xyz - position);
+                var color = vec3f(0.0);
+
+                for (var i = 0; i < ${NUM_LIGHTS}; i++) {
+                    let lightPosition = lightPositions[i].xyz;
+                    let lightColor = lightColors[i].rgb * lightDampening;
+                    let lightVec: vec3f = lightPosition - position;
+                    let lightDirection = normalize(lightVec);
+                    let reflectionDirection = reflect(-lightDirection, normal);
+                    let nDotL: f32 = max(dot(lightDirection, normal), 0.0);
+                    let diffuse: vec3f = nDotL * lightColor;
+                    let specular: vec3f = pow(max(dot(reflectionDirection, eyeDirection), 0.0), 20.0) * lightColor;
+                    let lightDistance: f32 = length(lightVec);
+                    let attenuation: f32 = 1.0 / (lightDistance * lightDistance);
+                    color += attenuation * surfaceColor * (diffuse + specular);
+                }
+
+                return vec4f(color, 1.0);
+            }
+
+        `
+    });
+
+    // Pipeline
+    const lightingPipeline = device.createRenderPipeline({
+        label: 'lighting pipeline',
+        layout: 'auto',
+        vertex: {
+            module: lightingShaderModule,
+            entryPoint: "vs",
+            buffers: [
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float32x2",
+                        offset: 0
+                    }]
+                },
+            ]
+        },
+        fragment: {
+            module: lightingShaderModule,
+            entryPoint: "fs",
+            targets: [{
+                format: presentationFormat,
+            }],
+        },
+        primitive: {
+            topology: "triangle-strip",
+            cullMode: "back"
+        }
+    });
+
+    // Bind group
     const lightingBindGroup = device.createBindGroup({
         layout: lightingPipeline.getBindGroupLayout(0),
         entries: [
@@ -621,13 +638,13 @@ addDescription(
             {
                 binding: 1,
                 resource: {
-                    buffer: lightPositionsBuffer
+                    buffer: lights.positions
                 }
             },
             {
                 binding: 2,
                 resource: {
-                    buffer: lightColorsBuffer
+                    buffer: lights.colors
                 }
             },
             {
@@ -654,9 +671,9 @@ addDescription(
     });
 
 
-    ///////////////////////////
-    // Render pass description
-    ///////////////////////////
+    //////////////////////////////
+    // Render pass descriptions
+    //////////////////////////////
     
     const depthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
@@ -719,6 +736,10 @@ addDescription(
     };
 
     function draw() {
+        ///////////////////////////
+        // Update box positions
+        ///////////////////////////
+
         for (const box of boxes) {
             box.rotate[0] += 0.0005;
             box.rotate[1] += 0.001;
@@ -728,20 +749,26 @@ addDescription(
             device.queue.writeBuffer(box.uniformBuffer, 0, box.modelMatrix);
         }
 
-        const commandEncoder = device.createCommandEncoder();
 
         ///////////////////////////
         // Update light positions
         ///////////////////////////
 
-        lightsData.forEach((light, i) => {
+        lights.data.forEach((light, i) => {
             light.t = (light.t + 0.002) % (2 * Math.PI);
-            const position = lightPositionsBufferData.subarray(i * 4, i * 4 + 3);
+            const position = lights.positionData.subarray(i * 4, i * 4 + 3);
             vec3.scale(position, light.offset, Math.sin(light.t));
             vec3.add(position, light.position, position);
         });
 
-        device.queue.writeBuffer(lightPositionsBuffer, 0, lightPositionsBufferData);
+        device.queue.writeBuffer(lights.positions, 0, lights.positionData);
+
+
+        /////////////////////////////////////
+        // Create command encoder
+        /////////////////////////////////////
+
+        const commandEncoder = device.createCommandEncoder();
 
         /////////////////////////////////////
         // Draw lights as spheres to canvas
@@ -752,10 +779,10 @@ addDescription(
         const lightsRenderPass = commandEncoder.beginRenderPass(lightsRenderPassDescription);
         lightsRenderPass.setPipeline(lightsPipeline);
         lightsRenderPass.setVertexBuffer(0, sphere.positions);
-        lightsRenderPass.setVertexBuffer(1, lightPositionsBuffer);
-        lightsRenderPass.setVertexBuffer(2, lightColorsBuffer);
+        lightsRenderPass.setVertexBuffer(1, lights.positions);
+        lightsRenderPass.setVertexBuffer(2, lights.colors);
         lightsRenderPass.setIndexBuffer(sphere.indices, "uint32");
-        lightsRenderPass.setBindGroup(0, lightsBindGroup);
+        lightsRenderPass.setBindGroup(0, lights.bindGroup);
         lightsRenderPass.drawIndexed(sphere.count, NUM_LIGHTS);           
         lightsRenderPass.end();
 
@@ -793,6 +820,9 @@ addDescription(
         lightingRenderPass.draw(quad.count);           
         lightingRenderPass.end();
 
+        /////////////////////////////////////
+        // Close command encoder and submit
+        /////////////////////////////////////
         device.queue.submit([commandEncoder.finish()]);
 
         requestAnimationFrame(draw);
