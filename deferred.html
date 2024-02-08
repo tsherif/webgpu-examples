@@ -104,7 +104,10 @@ addDescription(
     device.queue.writeBuffer(cube.normals, 0, cubeData.normals);
     device.queue.writeBuffer(cube.uvs, 0, cubeData.uvs);
 
-    const sphereData = createSphere();
+    const sphereData = createSphere({
+        latBands: 8,
+        longBands: 8
+    });
 
     const sphere = {
         positions: device.createBuffer({
@@ -162,6 +165,7 @@ addDescription(
     ///////////////////////
     // Uniform values
     ////////////////////////
+
     const projMatrix = mat4.create();
     mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0);
 
@@ -172,7 +176,14 @@ addDescription(
     const viewProjectionMatrix = mat4.create();
     mat4.multiply(viewProjectionMatrix, projMatrix, viewMatrix);
 
-    const lights = new Array(NUM_LIGHTS).fill(null).map(() => ({
+    const viewProjectionMatrixBuffer = device.createBuffer({
+        size: 64,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(viewProjectionMatrixBuffer, 0, viewProjectionMatrix);
+
+    const lightsData = new Array(NUM_LIGHTS).fill(null).map(() => ({
         position: [
             randomRange(-5, 5),
             randomRange(-5, 5),
@@ -190,18 +201,19 @@ addDescription(
         ],
         t: randomRange(0, 2 * Math.PI),
     }));
-    const lightPositionsBufferData = new Float32Array(lights.length * 4);
+
+    const lightPositionsBufferData = new Float32Array(lightsData.length * 4);
     const lightPositionsBuffer = device.createBuffer({
         size: lightPositionsBufferData.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
-    const lightColorsBufferData = new Float32Array(lights.length * 4);
+    const lightColorsBufferData = new Float32Array(lightsData.length * 4);
     const lightColorsBuffer = device.createBuffer({
         size: lightColorsBufferData.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    lights.forEach((data, i) => {
+    lightsData.forEach((data, i) => {
         const index = i * 4;
         lightPositionsBufferData.set(data.position, index);
         lightColorsBufferData.set(data.color, index);
@@ -210,175 +222,21 @@ addDescription(
     device.queue.writeBuffer(lightPositionsBuffer, 0, lightPositionsBufferData);
     device.queue.writeBuffer(lightColorsBuffer, 0, lightColorsBufferData);
 
-    /////////////////////
-    // Geo pipeline
-    /////////////////////
-
-    const positionTexture = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: "rgba32float",
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
-    });
-
-    const normalTexture = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: "rgba32float",
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
-    });
-
-    const uvTexture = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: "rg32float",
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
-    });
-
-    // Scene uniforms that are only set once.
-    const geoSceneUniformBuffer = device.createBuffer({
-        size: 64,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    device.queue.writeBuffer(geoSceneUniformBuffer, 0, viewProjectionMatrix);
-
-    const geoShaderModule = device.createShaderModule({
-        label: 'geo shader',
-        code: `
-
-            struct SceneUniforms {
-                viewProjectionMatrix: mat4x4f,
-            };
-
-            struct ObjectUniforms {
-                worldMatrix: mat4x4f,
-            };
-
-            struct VSOut {
-                @builtin(position) clipPosition: vec4f,
-                @location(0) worldPosition: vec3f,
-                @location(1) normal: vec3f,
-                @location(2) uv: vec2f,
-            };
-
-            @group(0) @binding(0) var<uniform> sceneUniforms: SceneUniforms;
-            @group(0) @binding(1) var<uniform> objectUniforms: ObjectUniforms;
-
-            @vertex
-            fn vs(
-                @location(0) position: vec4f,
-                @location(1) normal: vec3f,
-                @location(2) uv: vec2f,
-            ) -> VSOut {
-                let worldPosition: vec4f = objectUniforms.worldMatrix * position;
-
-                var vsOut: VSOut;
-                vsOut.clipPosition = sceneUniforms.viewProjectionMatrix * worldPosition;
-                vsOut.worldPosition = worldPosition.xyz;
-                vsOut.normal = (objectUniforms.worldMatrix * vec4f(normal, 0.0)).xyz;
-                vsOut.uv = uv;
-
-                return vsOut;
-            }
-
-            struct FSOut {
-                @location(0) position: vec4f,
-                @location(1) normal: vec4f,
-                @location(2) uv: vec2f,
-            }
-
-            @fragment
-            fn fs(fsIn: VSOut) -> FSOut {
-                var fsOut: FSOut;
-                fsOut.position = vec4f(fsIn.worldPosition, 1.0);
-                fsOut.normal = vec4f(fsIn.normal, 0.0);
-                fsOut.uv = fsIn.uv;
-
-                return fsOut;
-            }
-
-        `
-    });
-
-    const geoPipeline = device.createRenderPipeline({
-        layout: 'auto',
-        vertex: {
-            module: geoShaderModule,
-            entryPoint: "vs",
-            buffers: [
-                {
-                    arrayStride: 12,
-                    attributes: [{
-                        shaderLocation: 0,
-                        format: "float32x3",
-                        offset: 0
-                    }]
-                },
-                {
-                    arrayStride: 12,
-                    attributes: [{
-                        shaderLocation: 1,
-                        format: "float32x3",
-                        offset: 0
-                    }]
-                },
-                {
-                    arrayStride: 8,
-                    attributes: [{
-                        shaderLocation: 2,
-                        format: "float32x2",
-                        offset: 0
-                    }]
-                }
-            ]
-        },
-        fragment: {
-            module: geoShaderModule,
-            entryPoint: "fs",
-
-            targets: [
-                {
-                    format: "rgba32float"
-                },
-                {
-                    format: "rgba32float"
-                },
-                {
-                    format: "rg32float"
-                }
-            ]
-        },
-        primitive: {
-            topology: "triangle-list",
-            cullMode: "back"
-        },
-        depthStencil: {
-            format: "depth24plus",
-            depthWriteEnabled: true,
-            depthCompare: "less"
-        }
-    });
-
-    // Scene uniforms that are only set once.
-    const lightsSceneUniformBuffer = device.createBuffer({
-        size: 64,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-
-    device.queue.writeBuffer(lightsSceneUniformBuffer, 0, viewProjectionMatrix);
+    ///////////////////////////////
+    // Lights pipeline
+    // (Render lights as spheres)
+    ///////////////////////////////
 
     const lightsShaderModule = device.createShaderModule({
         label: 'lights shader',
         code: `
-
-            struct SceneUniforms {
-                viewProjectionMatrix: mat4x4f,
-            };
 
             struct VSOut {
                 @builtin(position) clipPosition: vec4f,
                 @location(0) color: vec3f
             };
 
-            @group(0) @binding(0) var<uniform> sceneUniforms: SceneUniforms;
+            @group(0) @binding(0) var<uniform> viewProjectionMatrix: mat4x4f;
 
             @vertex
             fn vs(
@@ -389,7 +247,7 @@ addDescription(
                 let worldPosition: vec4f = vec4f(vertexPosition * 0.02 + position, 1.0);
 
                 var vsOut: VSOut;
-                vsOut.clipPosition = sceneUniforms.viewProjectionMatrix * worldPosition;
+                vsOut.clipPosition = viewProjectionMatrix * worldPosition;
                 vsOut.color = color.rgb;
 
                 return vsOut;
@@ -405,6 +263,7 @@ addDescription(
     });
 
     const lightsPipeline = device.createRenderPipeline({
+        label: 'lights pipeline',
         layout: 'auto',
         vertex: {
             module: lightsShaderModule,
@@ -465,37 +324,166 @@ addDescription(
             {
                 binding: 0,
                 resource: {
-                    buffer: lightsSceneUniformBuffer
+                    buffer: viewProjectionMatrixBuffer
                 }
             }
         ]
     });
 
-    ///////////////////
-    // Draw pipeline
-    ///////////////////
+    ////////////////////////////
+    // Geo pipeline
+    // (Draw boxes to gBuffer)
+    ////////////////////////////
+
+    const positionTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rgba32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    const normalTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rgba32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    const uvTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "rg32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+    });    
+
+    const gBufferShaderModule = device.createShaderModule({
+        label: 'gBuffer shader',
+        code: `
+            struct VSOut {
+                @builtin(position) clipPosition: vec4f,
+                @location(0) worldPosition: vec3f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f,
+            };
+
+            @group(0) @binding(0) var<uniform> viewProjectionMatrix: mat4x4f;
+            @group(0) @binding(1) var<uniform> worldMatrix: mat4x4f;
+
+            @vertex
+            fn vs(
+                @location(0) position: vec4f,
+                @location(1) normal: vec3f,
+                @location(2) uv: vec2f,
+            ) -> VSOut {
+                let worldPosition: vec4f = worldMatrix * position;
+
+                var vsOut: VSOut;
+                vsOut.clipPosition = viewProjectionMatrix * worldPosition;
+                vsOut.worldPosition = worldPosition.xyz;
+                vsOut.normal = (worldMatrix * vec4f(normal, 0.0)).xyz;
+                vsOut.uv = uv;
+
+                return vsOut;
+            }
+
+            struct FSOut {
+                @location(0) position: vec4f,
+                @location(1) normal: vec4f,
+                @location(2) uv: vec2f,
+            }
+
+            @fragment
+            fn fs(fsIn: VSOut) -> FSOut {
+                var fsOut: FSOut;
+                fsOut.position = vec4f(fsIn.worldPosition, 1.0);
+                fsOut.normal = vec4f(fsIn.normal, 0.0);
+                fsOut.uv = fsIn.uv;
+
+                return fsOut;
+            }
+
+        `
+    });
+
+    const gBufferPipeline = device.createRenderPipeline({
+        label: 'gbuffer pipeline',
+        layout: 'auto',
+        vertex: {
+            module: gBufferShaderModule,
+            entryPoint: "vs",
+            buffers: [
+                {
+                    arrayStride: 12,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float32x3",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 12,
+                    attributes: [{
+                        shaderLocation: 1,
+                        format: "float32x3",
+                        offset: 0
+                    }]
+                },
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 2,
+                        format: "float32x2",
+                        offset: 0
+                    }]
+                }
+            ]
+        },
+        fragment: {
+            module: gBufferShaderModule,
+            entryPoint: "fs",
+
+            targets: [
+                {
+                    format: "rgba32float"
+                },
+                {
+                    format: "rgba32float"
+                },
+                {
+                    format: "rg32float"
+                }
+            ]
+        },
+        primitive: {
+            topology: "triangle-list",
+            cullMode: "back"
+        },
+        depthStencil: {
+            format: "depth24plus",
+            depthWriteEnabled: true,
+            depthCompare: "less"
+        }
+    });
+
+    ///////////////////////////////////////
+    // Lighting pipeline
+    // (Apply lighting to datain gBuffer)
+    ///////////////////////////////////////
 
     // Scene uniforms that are only set once.
-    const drawSceneUniformBuffer = device.createBuffer({
+    const eyePositionBuffer = device.createBuffer({
         size: 16,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    device.queue.writeBuffer(drawSceneUniformBuffer, 0, eyePosition);
+    device.queue.writeBuffer(eyePositionBuffer, 0, eyePosition);
 
-    const drawShaderModule = device.createShaderModule({
+    const lightingShaderModule = device.createShaderModule({
         code: `
-
-            struct SceneUniforms {
-                eyePosition: vec4f,
-            };
 
             @vertex
             fn vs(@location(0) position: vec4f) -> @builtin(position) vec4f {
                 return position;
             }
 
-            @group(0) @binding(0) var<uniform> sceneUniforms: SceneUniforms;
+            @group(0) @binding(0) var<uniform>  eyePosition: vec4f;
             @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
             @group(0) @binding(2) var<uniform> lightColors: array<vec4f, ${NUM_LIGHTS}>;
             @group(0) @binding(3) var textureSampler: sampler;
@@ -519,7 +507,7 @@ addDescription(
 
                 let position = positionSample.xyz;
 
-                let eyeDirection: vec3f = normalize(sceneUniforms.eyePosition.xyz - position);
+                let eyeDirection: vec3f = normalize(eyePosition.xyz - position);
                 let ambient: f32 = 0.0;
                 var color = vec3f(ambient);
 
@@ -541,10 +529,11 @@ addDescription(
         `
     });
 
-    const drawPipeline = device.createRenderPipeline({
+    const lightingPipeline = device.createRenderPipeline({
+        label: 'lighting pipeline',
         layout: 'auto',
         vertex: {
-            module: drawShaderModule,
+            module: lightingShaderModule,
             entryPoint: "vs",
             buffers: [
                 {
@@ -558,7 +547,7 @@ addDescription(
             ]
         },
         fragment: {
-            module: drawShaderModule,
+            module: lightingShaderModule,
             entryPoint: "fs",
             targets: [{
                 format: presentationFormat,
@@ -593,12 +582,12 @@ addDescription(
         });
        
         const bindGroup = device.createBindGroup({
-            layout: geoPipeline.getBindGroupLayout(0),
+            layout: gBufferPipeline.getBindGroupLayout(0),
             entries: [
                 {
                     binding: 0,
                     resource: {
-                        buffer: geoSceneUniformBuffer
+                        buffer: viewProjectionMatrixBuffer
                     }
                 },
                 {
@@ -620,13 +609,13 @@ addDescription(
         };
     });
 
-    const drawBindGroup = device.createBindGroup({
-        layout: drawPipeline.getBindGroupLayout(0),
+    const lightingBindGroup = device.createBindGroup({
+        layout: lightingPipeline.getBindGroupLayout(0),
         entries: [
             {
                 binding: 0,
                 resource: {
-                    buffer: drawSceneUniformBuffer
+                    buffer: eyePositionBuffer
                 }
             },
             {
@@ -678,7 +667,7 @@ addDescription(
     const lightsRenderPassDescription = {
         colorAttachments: [
             {
-                view: positionTexture.createView(),
+                view: context.getCurrentTexture().createView(),
                 loadOp: "clear",
                 storeOp: "store",
                 clearValue: [0, 0, 0, 1]
@@ -692,7 +681,7 @@ addDescription(
         }
     };
 
-    const geoRenderPassDescription = {
+    const gBufferRenderPassDescription = {
         colorAttachments: [
             {
                 view: positionTexture.createView(),
@@ -721,7 +710,7 @@ addDescription(
     };
 
 
-    const drawRenderPassDescription = {
+    const lightingRenderPassDescription = {
         colorAttachments: [{
             view: context.getCurrentTexture().createView(),
             loadOp: "load",
@@ -741,11 +730,11 @@ addDescription(
 
         const commandEncoder = device.createCommandEncoder();
 
-        ///////////
-        // Draw
-        ///////////
+        ///////////////////////////
+        // Update light positions
+        ///////////////////////////
 
-        lights.forEach((light, i) => {
+        lightsData.forEach((light, i) => {
             light.t = (light.t + 0.002) % (2 * Math.PI);
             const position = lightPositionsBufferData.subarray(i * 4, i * 4 + 3);
             vec3.scale(position, light.offset, Math.sin(light.t));
@@ -754,6 +743,9 @@ addDescription(
 
         device.queue.writeBuffer(lightPositionsBuffer, 0, lightPositionsBufferData);
 
+        /////////////////////////////////////
+        // Draw lights as spheres to canvas
+        /////////////////////////////////////
 
         lightsRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
@@ -767,32 +759,39 @@ addDescription(
         lightsRenderPass.drawIndexed(sphere.count, NUM_LIGHTS);           
         lightsRenderPass.end();
 
-        //////////////
-        // Geo
-        //////////////
+        //////////////////////////////////////////////
+        // Draw boxes to GBuffer
+        // (Depth buffer shared with previous pass)
+        //////////////////////////////////////////////
 
-        const geoPass = commandEncoder.beginRenderPass(geoRenderPassDescription);
-        geoPass.setPipeline(geoPipeline);
-        geoPass.setVertexBuffer(0, cube.positions);
-        geoPass.setVertexBuffer(1, cube.normals);
-        geoPass.setVertexBuffer(2, cube.uvs);
+        const gBufferPass = commandEncoder.beginRenderPass(gBufferRenderPassDescription);
+        gBufferPass.setPipeline(gBufferPipeline);
+        gBufferPass.setVertexBuffer(0, cube.positions);
+        gBufferPass.setVertexBuffer(1, cube.normals);
+        gBufferPass.setVertexBuffer(2, cube.uvs);
 
         for (const box of boxes) {
-            geoPass.setBindGroup(0, box.bindGroup);
-            geoPass.draw(cube.count);           
+            gBufferPass.setBindGroup(0, box.bindGroup);
+            gBufferPass.draw(cube.count);           
         }
 
-        geoPass.end();
+        gBufferPass.end();
 
-        drawRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
+        //////////////////////////////////
+        // Draw a full-screen quad and
+        // apply lighting to data in
+        // GBuffer.
+        //////////////////////////////////
 
-        const drawRenderPass = commandEncoder.beginRenderPass(drawRenderPassDescription);
+        lightingRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
-        drawRenderPass.setPipeline(drawPipeline);
-        drawRenderPass.setVertexBuffer(0, quad.positions);
-        drawRenderPass.setBindGroup(0, drawBindGroup);
-        drawRenderPass.draw(quad.count);           
-        drawRenderPass.end();
+        const lightingRenderPass = commandEncoder.beginRenderPass(lightingRenderPassDescription);
+
+        lightingRenderPass.setPipeline(lightingPipeline);
+        lightingRenderPass.setVertexBuffer(0, quad.positions);
+        lightingRenderPass.setBindGroup(0, lightingBindGroup);
+        lightingRenderPass.draw(quad.count);           
+        lightingRenderPass.end();
 
         device.queue.submit([commandEncoder.finish()]);
 
