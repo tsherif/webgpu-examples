@@ -8,7 +8,7 @@
 <!--
   The MIT License (MIT)
 
-  Copyright (c) 2020 Tarek Sherif
+  Copyright (c) 2024 Tarek Sherif
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of
   this software and associated documentation files (the "Software"), to deal in
@@ -45,8 +45,7 @@ addDescription(
 
 (async () => {
     //////////////////////////////////////////
-    // Set up WebGPU adapter, load
-    // texture image
+    // Set up WebGPU adapter
     //////////////////////////////////////////
 
     const [adapter, [image]] = await Promise.all([
@@ -285,6 +284,8 @@ addDescription(
     });
 
     // Objects
+    // Buffers used as vertex data in the lights pass,
+    // uniform data in the lighting pass.
     const lights = {
         data: new Array(NUM_LIGHTS).fill(null).map(() => ({
             position: [
@@ -342,19 +343,19 @@ addDescription(
     ////////////////////////////
 
     // Render targets
-    const positionTexture = device.createTexture({
+    const gBufferPositionsTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "rgba32float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    const normalTexture = device.createTexture({
+    const gBufferNormalsTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "rgba32float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    const uvTexture = device.createTexture({
+    const gBufferUVTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "rg32float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
@@ -529,12 +530,12 @@ addDescription(
     /////////////////////////////////////////
 
     // Uniforms
-    const eyePositionBuffer = device.createBuffer({
+    const lightingEyePositionBuffer = device.createBuffer({
         size: 16,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    device.queue.writeBuffer(eyePositionBuffer, 0, eyePosition);
+    device.queue.writeBuffer(lightingEyePositionBuffer, 0, eyePosition);
 
     // Shader module
     const lightingShaderModule = device.createShaderModule({
@@ -632,7 +633,7 @@ addDescription(
             {
                 binding: 0,
                 resource: {
-                    buffer: eyePositionBuffer
+                    buffer: lightingEyePositionBuffer
                 }
             },
             {
@@ -653,15 +654,15 @@ addDescription(
             },
             {
                 binding: 4,
-                resource: positionTexture.createView()
+                resource: gBufferPositionsTexture.createView()
             },
             {
                 binding: 5,
-                resource: normalTexture.createView()
+                resource: gBufferNormalsTexture.createView()
             },
             {
                 binding: 6,
-                resource: uvTexture.createView()
+                resource: gBufferUVTexture.createView()
             },
             {
                 binding: 7,
@@ -701,19 +702,19 @@ addDescription(
     const gBufferRenderPassDescription = {
         colorAttachments: [
             {
-                view: positionTexture.createView(),
+                view: gBufferPositionsTexture.createView(),
                 loadOp: "clear",
                 storeOp: "store",
                 clearValue: [0, 0, 0, 0]
             },
             {
-                view: normalTexture.createView(),
+                view: gBufferNormalsTexture.createView(),
                 loadOp: "clear",
                 storeOp: "store",
                 clearValue: [0, 0, 0, 0]
             },
             {
-                view: uvTexture.createView(),
+                view: gBufferUVTexture.createView(),
                 loadOp: "clear",
                 storeOp: "store",
                 clearValue: [0, 0, 0, 0]
