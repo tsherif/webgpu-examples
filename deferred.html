@@ -343,18 +343,14 @@ addDescription(
                 return position;
             }
 
-            struct LightUniforms {
-                position: vec4f,
-                color: vec4f
-            }; 
-
             @group(0) @binding(0) var<uniform> sceneUniforms: SceneUniforms;
-            @group(0) @binding(1) var<uniform> lightUniforms: array<LightUniforms, ${NUM_LIGHTS}>;
-            @group(0) @binding(2) var textureSampler: sampler;
-            @group(0) @binding(3) var positionTexture: texture_2d<f32>;
-            @group(0) @binding(4) var normalTexture: texture_2d<f32>;
-            @group(0) @binding(5) var uvTexture: texture_2d<f32>;
-            @group(0) @binding(6) var colorTexture: texture_2d<f32>;
+            @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
+            @group(0) @binding(2) var<uniform> lightColors: array<vec4f, ${NUM_LIGHTS}>;
+            @group(0) @binding(3) var textureSampler: sampler;
+            @group(0) @binding(4) var positionTexture: texture_2d<f32>;
+            @group(0) @binding(5) var normalTexture: texture_2d<f32>;
+            @group(0) @binding(6) var uvTexture: texture_2d<f32>;
+            @group(0) @binding(7) var colorTexture: texture_2d<f32>;
 
             @fragment
             fn fs(@builtin(position) canvasPosition: vec4f) -> @location(0) vec4f {
@@ -376,12 +372,12 @@ addDescription(
                 var color = vec3f(ambient);
 
                 for (var i = 0; i < ${NUM_LIGHTS}; i++) {
-                    let lightVec: vec3f = lightUniforms[i].position.xyz - position;
+                    let lightVec: vec3f = lightPositions[i].xyz - position;
                     let lightDirection = normalize(lightVec);
                     let reflectionDirection = reflect(-lightDirection, normal);
                     let nDotL: f32 = max(dot(lightDirection, normal), 0.0);
-                    let diffuse: vec3f = nDotL * lightUniforms[i].color.rgb;
-                    let specular: vec3f = pow(max(dot(reflectionDirection, eyeDirection), 0.0), 20.0) * lightUniforms[i].color.rgb;
+                    let diffuse: vec3f = nDotL * lightColors[i].rgb;
+                    let specular: vec3f = pow(max(dot(reflectionDirection, eyeDirection), 0.0), 20.0) * lightColors[i].rgb;
                     let lightDistance: f32 = length(lightVec);
                     let attenuation: f32 = 1.0 / (lightDistance * lightDistance);
                     color += attenuation * surfaceColor * (diffuse + specular);
@@ -487,7 +483,7 @@ addDescription(
         };
     });
 
-    const lightsData = new Array(NUM_LIGHTS).fill(null).map(() => ({
+    const lights = new Array(NUM_LIGHTS).fill(null).map(() => ({
         position: [
             randomRange(-5, 5),
             randomRange(-5, 5),
@@ -499,19 +495,25 @@ addDescription(
             randomRange(0, 0.1)
         ]
     }));
-    const lightsUniformBufferData = new Float32Array(lightsData.length * 8);
-    const lightsUniformBuffer = device.createBuffer({
-        size: lightsUniformBufferData.byteLength,
+    const lightPositionsBufferData = new Float32Array(lights.length * 4);
+    const lightPositionsBuffer = device.createBuffer({
+        size: lightPositionsBufferData.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    const lightColorsBufferData = new Float32Array(lights.length * 4);
+    const lightColorsBuffer = device.createBuffer({
+        size: lightColorsBufferData.byteLength,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    lightsData.forEach((data, i) => {
-        const index = i * 8;
-        lightsUniformBufferData.set(data.position, index);
-        lightsUniformBufferData.set(data.color, index + 4);
+    lights.forEach((data, i) => {
+        const index = i * 4;
+        lightPositionsBufferData.set(data.position, index);
+        lightColorsBufferData.set(data.color, index);
     });
 
-    device.queue.writeBuffer(lightsUniformBuffer, 0, lightsUniformBufferData);
+    device.queue.writeBuffer(lightPositionsBuffer, 0, lightPositionsBufferData);
+    device.queue.writeBuffer(lightColorsBuffer, 0, lightColorsBufferData);
 
     const drawBindGroup = device.createBindGroup({
         layout: drawPipeline.getBindGroupLayout(0),
@@ -525,27 +527,33 @@ addDescription(
             {
                 binding: 1,
                 resource: {
-                    buffer: lightsUniformBuffer
+                    buffer: lightPositionsBuffer
                 }
             },
             {
                 binding: 2,
-                resource: sampler
+                resource: {
+                    buffer: lightColorsBuffer
+                }
             },
             {
                 binding: 3,
-                resource: positionTexture.createView()
+                resource: sampler
             },
             {
                 binding: 4,
-                resource: normalTexture.createView()
+                resource: positionTexture.createView()
             },
             {
                 binding: 5,
-                resource: uvTexture.createView()
+                resource: normalTexture.createView()
             },
             {
                 binding: 6,
+                resource: uvTexture.createView()
+            },
+            {
+                binding: 7,
                 resource: colorTexture.createView()
             }
         ]
