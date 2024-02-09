@@ -766,14 +766,19 @@ addDescription(
         }]
     };
 
-    function draw() {
+    let lastTime;
+    function draw(time) {
+        lastTime = lastTime ?? time;
+        const dt = time - lastTime;
+        lastTime = time;
+
         ///////////////////////////
         // Update box positions
         ///////////////////////////
 
         for (const box of boxes) {
-            box.rotate[0] += 0.0005;
-            box.rotate[1] += 0.001;
+            box.rotate[0] += 0.0001 * dt;
+            box.rotate[1] += 0.0002 * dt;
 
             xformMatrix(box.modelMatrix, box.translate, box.rotate, box.scale);
             
@@ -786,7 +791,7 @@ addDescription(
         ///////////////////////////
 
         lights.data.forEach((light, i) => {
-            light.t = (light.t + 0.002) % (2 * Math.PI);
+            light.t = (light.t + 0.0004 * dt) % (2 * Math.PI);
             const position = lights.positionData.subarray(i * 4, i * 4 + 3);
             vec3.scale(position, light.offset, Math.sin(light.t));
             vec3.add(position, light.position, position);

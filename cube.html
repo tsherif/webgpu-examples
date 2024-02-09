@@ -334,13 +334,20 @@ addDescription(
         }
     };
 
-    requestAnimationFrame(function draw() {
+    let lastTime;
+    requestAnimationFrame(function draw(time) {
+        lastTime = lastTime ?? time;
+        const dt = time - lastTime;
+        lastTime = time;
+
+
         /////////////////////////
         // Update uniform buffer
         /////////////////////////
         
-        rotation[0] += 0.01;
-        rotation[2] += 0.005;
+        rotation[0] += 0.001 * dt;
+        rotation[1] += 0.002 * dt;
+
         xformMatrix(modelMatrix, null, rotation, null);
         
         device.queue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);

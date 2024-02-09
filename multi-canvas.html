@@ -365,11 +365,11 @@ addDescription(
         }
     });
 
-    ///////////////////////////
-    // Render pass description
-    ///////////////////////////
-
-    requestAnimationFrame(function draw() {
+    let lastTime;
+    requestAnimationFrame(function draw(time) {
+        lastTime = lastTime ?? time;
+        const dt = time - lastTime;
+        lastTime = time;
 
         const commandEncoder = device.createCommandEncoder();
         canvases.forEach(c => {
@@ -378,8 +378,8 @@ addDescription(
             // Update model matrix
             /////////////////////////
             
-            c.rotation[0] += 0.01;
-            c.rotation[2] += 0.005;
+            c.rotation[0] += 0.001 * dt;
+            c.rotation[1] += 0.002 * dt;
             xformMatrix(c.modelMatrix, null, c.rotation, null);
             
             device.queue.writeBuffer(c.vertexUniformBuffer, 0, c.modelMatrix);
