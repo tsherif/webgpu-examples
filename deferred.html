@@ -34,7 +34,7 @@ import { checkSupport, addDescription, loadImageBitmaps, createCube, createSpher
 const { mat4, vec3 } = glMatrix;
 
 const NUM_BOXES = 256;
-const NUM_LIGHTS = 512;
+const NUM_LIGHTS = 256;
 
 checkSupport();
 addDescription(
@@ -555,7 +555,7 @@ addDescription(
                 return position;
             }
 
-            const lightDampening = 0.06;
+            const lightDampening = 0.08;
 
             @group(0) @binding(0) var<uniform>  eyePosition: vec4f;
             @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
