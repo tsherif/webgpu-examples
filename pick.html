@@ -330,6 +330,9 @@ addDescription(
                 format: presentationFormat
             }]
         },
+        multisample: {
+            count: 4
+        },
         primitive: {
             topology: "triangle-list",
             cullMode: "back"
@@ -437,7 +440,7 @@ addDescription(
     // Render pass description
     ///////////////////////////
     
-    const depthTexture = device.createTexture({
+    const pickDepthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "depth24plus",
         usage:  GPUTextureUsage.RENDER_ATTACHMENT
@@ -451,22 +454,38 @@ addDescription(
             clearValue: [0, 0, 0, 0]
         }],
         depthStencilAttachment: {
-            view: depthTexture.createView(),
+            view: pickDepthTexture.createView(),
             depthClearValue: 1,
             depthLoadOp: "clear",
             depthStoreOp: "store"
         }
     };
 
+    const msaaTexture = device.createTexture({
+        label: 'msaa texture',
+        size: [canvas.width, canvas.height],
+        format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
+
+    const drawDepthTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "depth24plus",
+        usage:  GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
+
     const drawRenderPassDescription = {
         colorAttachments: [{
-            view: context.getCurrentTexture().createView(),
+            view: msaaTexture.createView(),
+            resolveTarget: context.getCurrentTexture().createView(),
             loadOp: "clear",
             storeOp: "store",
             clearValue: [0, 0, 0, 1]
         }],
         depthStencilAttachment: {
-            view: depthTexture.createView(),
+            view: drawDepthTexture.createView(),
             depthClearValue: 1,
             depthLoadOp: "clear",
             depthStoreOp: "store"
@@ -500,69 +519,71 @@ addDescription(
         // Picking
         //////////////
 
-        
-        const pickCommandEncoder = device.createCommandEncoder();
-        const pickPass = pickCommandEncoder.beginRenderPass(pickRenderPassDescription);
+        if (pickBuffer.mapState === "unmapped") {
+            
+            const pickCommandEncoder = device.createCommandEncoder();
+            const pickPass = pickCommandEncoder.beginRenderPass(pickRenderPassDescription);
 
-        // Draw all boxes with pick color (index encoded as r, g, b, a).
-        pickPass.setPipeline(pickPipeline);
-        pickPass.setVertexBuffer(0, positionBuffer);
+            // Draw all boxes with pick color (index encoded as r, g, b, a).
+            pickPass.setPipeline(pickPipeline);
+            pickPass.setVertexBuffer(0, positionBuffer);
 
-        for (const box of boxes) {
-            pickPass.setBindGroup(0, box.pickBindGroup);
-            pickPass.draw(numVertices);           
+            for (const box of boxes) {
+                pickPass.setBindGroup(0, box.pickBindGroup);
+                pickPass.draw(numVertices);           
+            }
+
+            pickPass.end();
+            
+            // Copy pixel at mouse position into buffer.
+            pickCommandEncoder.copyTextureToBuffer(
+                { 
+                    texture: pickTexture,
+                    origin: [mouseX, mouseY]
+                },
+                { 
+                    buffer: pickBuffer
+                },
+                [1, 1]
+            );
+
+            device.queue.submit([pickCommandEncoder.finish()]);
+
+            // Map buffer
+            pickBuffer.mapAsync(GPUMapMode.READ).then(() => {
+
+                // Read pixel r, g, b, a
+                const [r, g, b, a] = new Uint8Array(pickBuffer.getMappedRange());
+                pickBuffer.unmap();
+
+                // Decode index.
+                const index = (r | (g << 8) | (b << 16) | (a << 24)) - 1;
+
+                if (index === lastPickIndex) {
+                    return;
+                }
+
+                if (lastPickIndex > -1) {
+                    device.queue.writeBuffer(boxes[lastPickIndex].drawUniformBuffer, 64, unhighlightColor);
+                }
+
+                // If hovering, update highligh color, cursor.
+                if (index > -1) {
+                    device.queue.writeBuffer(boxes[index].drawUniformBuffer, 64, highlightColor);
+                    document.body.style.cursor = 'pointer';
+                } else {
+                    document.body.style.cursor = 'auto';
+                }
+
+                lastPickIndex = index;
+            });
         }
-
-        pickPass.end();
-        
-        // Copy pixel at mouse position into buffer.
-        pickCommandEncoder.copyTextureToBuffer(
-            { 
-                texture: pickTexture,
-                origin: [mouseX, mouseY]
-            },
-            { 
-                buffer: pickBuffer
-            },
-            [1, 1]
-        );
-
-        device.queue.submit([pickCommandEncoder.finish()]);
-
-        // Map buffer
-        pickBuffer.mapAsync(GPUMapMode.READ).then(() => {
-
-            // Read pixel r, g, b, a
-            const [r, g, b, a] = new Uint8Array(pickBuffer.getMappedRange());
-            pickBuffer.unmap();
-
-            // Decode index.
-            const index = (r | (g << 8) | (b << 16) | (a << 24)) - 1;
-
-            if (index === lastPickIndex) {
-                return;
-            }
-
-            if (lastPickIndex > -1) {
-                device.queue.writeBuffer(boxes[lastPickIndex].drawUniformBuffer, 64, unhighlightColor);
-            }
-
-            // If hovering, update highligh color, cursor.
-            if (index > -1) {
-                device.queue.writeBuffer(boxes[index].drawUniformBuffer, 64, highlightColor);
-                document.body.style.cursor = 'pointer';
-            } else {
-                document.body.style.cursor = 'auto';
-            }
-
-            lastPickIndex = index;
-        });
 
         ///////////
         // Draw
         ///////////
 
-        drawRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
+        drawRenderPassDescription.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
 
         const drawCommandEncoder = device.createCommandEncoder();
         const renderPass = drawCommandEncoder.beginRenderPass(drawRenderPassDescription);
