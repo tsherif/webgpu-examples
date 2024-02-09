@@ -41,6 +41,7 @@
 <body>
 <script type="module">
 import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, randomRange } from "./utils/utils.js";
+const { mat4 } = glMatrix;
 
 const NUM_CANVASES = 100;
 
@@ -243,6 +244,9 @@ addDescription(
                 format: presentationFormat
             }]
         },
+        multisample: {
+            count: 4
+        },
         primitive: {
             topology: "triangle-list",
         },
@@ -266,6 +270,14 @@ addDescription(
             format: presentationFormat
         });
 
+        const msaaTexture = device.createTexture({
+            label: 'msaa texture',
+            size: [canvas.width, canvas.height],
+            format: presentationFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
         const projectionMatrix = mat4.create();
         const viewMatrix = mat4.create();
         const viewProjectionMatrix = mat4.create();
@@ -282,7 +294,6 @@ addDescription(
 
         const modelMatrix = mat4.create();
         xformMatrix(modelMatrix, null, rotation, null);
-
 
         const vertexUniformBuffer = device.createBuffer({
             size: 128,
@@ -321,12 +332,14 @@ addDescription(
         const depthTexture = device.createTexture({
             size: [canvas.width, canvas.height],
             format: "depth24plus",
-            usage:  GPUTextureUsage.RENDER_ATTACHMENT
+            usage:  GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
         });
 
         const renderPassDescriptor = {
             colorAttachments: [{
-                view: context.getCurrentTexture().createView(),
+                view: msaaTexture.createView(),
+                resolveTarget: context.getCurrentTexture().createView(),
                 loadOp: 'clear',
                 storeOp: 'store',
                 clearValue: [0, 0, 0, 1]
@@ -346,6 +359,7 @@ addDescription(
             modelMatrix,
             bindGroup,
             vertexUniformBuffer,
+            msaaTexture,
             depthTexture,
             renderPassDescriptor
         }
@@ -370,7 +384,7 @@ addDescription(
             
             device.queue.writeBuffer(c.vertexUniformBuffer, 0, c.modelMatrix);
 
-            c.renderPassDescriptor.colorAttachments[0].view = c.context.getCurrentTexture().createView();
+            c.renderPassDescriptor.colorAttachments[0].resolveTarget = c.context.getCurrentTexture().createView();
 
             const renderPass = commandEncoder.beginRenderPass(c.renderPassDescriptor);
             renderPass.setPipeline(pipeline);

@@ -68,6 +68,14 @@ addDescription(
         device,
         format: presentationFormat
     });
+
+    const msaaTexture = device.createTexture({
+        label: 'msaa texture',
+        size: [canvas.width, canvas.height],
+        format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -258,6 +266,9 @@ addDescription(
                 format: presentationFormat
             }]
         },
+        multisample: {
+            count: 4
+        },
         primitive: {
             topology: "triangle-list",
             cullMode: "back"
@@ -303,12 +314,14 @@ addDescription(
     const depthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "depth24plus",
-        usage:  GPUTextureUsage.RENDER_ATTACHMENT
+        usage:  GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
     })
 
     const renderPassDescription = {
         colorAttachments: [{
-            view: context.getCurrentTexture().createView(),
+            view: msaaTexture.createView(),
+            resolveTarget: context.getCurrentTexture().createView(),
             loadOp: 'clear',
             storeOp: 'store',
             clearValue: [0, 0, 0, 1]
@@ -333,7 +346,7 @@ addDescription(
         device.queue.writeBuffer(vertexUniformBuffer, 0, modelMatrix);
 
 
-        renderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
+        renderPassDescription.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
 
         const commandEncoder = device.createCommandEncoder();
         const renderPass = commandEncoder.beginRenderPass(renderPassDescription);
