@@ -63,14 +63,6 @@ addDescription(
         format: presentationFormat
     });
 
-    const msaaTexture = device.createTexture({
-        label: 'msaa texture',
-        size: [canvas.width, canvas.height],
-        format: presentationFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
-    });
-
     ////////////////////////////////////////
     // Create vertex buffers and load data
     ////////////////////////////////////////
@@ -180,6 +172,14 @@ addDescription(
     // Create and submit command buffer
     // with 1 render pass.
     ////////////////////////////////////
+
+    const msaaTexture = device.createTexture({
+        label: 'msaa texture',
+        size: [canvas.width, canvas.height],
+        format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
 
     const commandEncoder = device.createCommandEncoder();
     const renderPass = commandEncoder.beginRenderPass({

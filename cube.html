@@ -68,14 +68,6 @@ addDescription(
         device,
         format: presentationFormat
     });
-
-    const msaaTexture = device.createTexture({
-        label: 'msaa texture',
-        size: [canvas.width, canvas.height],
-        format: presentationFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
-    });
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -310,6 +302,14 @@ addDescription(
     ///////////////////////////
     // Render pass description
     ///////////////////////////
+
+    const msaaTexture = device.createTexture({
+        label: 'msaa texture',
+        size: [canvas.width, canvas.height],
+        format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
     
     const depthTexture = device.createTexture({
         size: [canvas.width, canvas.height],

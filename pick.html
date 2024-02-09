@@ -139,11 +139,17 @@ addDescription(
     // Picking pipeline
     /////////////////////
 
-    // Picking render target
+    // Picking render targets
     const pickTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "rgba8unorm",
         usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    const pickDepthTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "depth24plus",
+        usage:  GPUTextureUsage.RENDER_ATTACHMENT
     });
 
     // Picking buffer to copy render target pixel values to
@@ -217,6 +223,22 @@ addDescription(
     ///////////////////
     // Draw pipeline
     ///////////////////
+
+    // Render targets
+    const msaaTexture = device.createTexture({
+        label: 'msaa texture',
+        size: [canvas.width, canvas.height],
+        format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
+
+    const drawDepthTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "depth24plus",
+        usage:  GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
 
     // Scene uniforms that are only set once.
     const sceneUniformBuffer = device.createBuffer({
@@ -439,12 +461,6 @@ addDescription(
     ///////////////////////////
     // Render pass description
     ///////////////////////////
-    
-    const pickDepthTexture = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: "depth24plus",
-        usage:  GPUTextureUsage.RENDER_ATTACHMENT
-    });
 
     const pickRenderPassDescription = {
         colorAttachments: [{
@@ -460,21 +476,6 @@ addDescription(
             depthStoreOp: "store"
         }
     };
-
-    const msaaTexture = device.createTexture({
-        label: 'msaa texture',
-        size: [canvas.width, canvas.height],
-        format: presentationFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
-    });
-
-    const drawDepthTexture = device.createTexture({
-        size: [canvas.width, canvas.height],
-        format: "depth24plus",
-        usage:  GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
-    });
 
     const drawRenderPassDescription = {
         colorAttachments: [{

@@ -319,6 +319,9 @@ addDescription(
                 }
             }]
         },
+        multisample: {
+            count: 4
+        },
         primitive: {
             topology: "triangle-strip",
             stripIndexFormat: "uint32"
@@ -353,9 +356,18 @@ addDescription(
     // Render pass description
     ///////////////////////////
 
+    const msaaTexture = device.createTexture({
+        label: 'msaa texture',
+        size: [canvas.width, canvas.height],
+        format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
+
     const renderPassDescriptor = {
         colorAttachments: [{
-            view: context.getCurrentTexture().createView(),
+            view: msaaTexture.createView(),
+            resolveTarget: context.getCurrentTexture().createView(),
             loadOp: "clear",
             storeOp: "store",
             clearValue: [0, 0, 0, 1]
@@ -384,7 +396,7 @@ addDescription(
         // Get current canvas texture
         ////////////////////////////////
 
-        renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
+        renderPassDescriptor.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
 
         ///////////////////////
         // Encode render pass

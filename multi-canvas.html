@@ -270,14 +270,6 @@ addDescription(
             format: presentationFormat
         });
 
-        const msaaTexture = device.createTexture({
-            label: 'msaa texture',
-            size: [canvas.width, canvas.height],
-            format: presentationFormat,
-            usage: GPUTextureUsage.RENDER_ATTACHMENT,
-            sampleCount: 4
-        });
-
         const projectionMatrix = mat4.create();
         const viewMatrix = mat4.create();
         const viewProjectionMatrix = mat4.create();
@@ -327,6 +319,14 @@ addDescription(
                 }
 
             ]
+        });
+
+        const msaaTexture = device.createTexture({
+            label: 'msaa texture',
+            size: [canvas.width, canvas.height],
+            format: presentationFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
         });
 
         const depthTexture = device.createTexture({
