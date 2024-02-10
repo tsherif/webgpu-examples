@@ -30,7 +30,7 @@
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <script type="module">
-import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, createQuad, xformMatrix, randomRange } from "./utils/utils.js";
+import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, createQuad, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap } from "./utils/utils.js";
 const { mat4, vec3 } = glMatrix;
 
 const NUM_BOXES = 256;
@@ -143,12 +143,14 @@ addDescription(
 
     const sampler = device.createSampler({
         minFilter: "linear",
-        magFilter: "linear"
+        magFilter: "linear",
+        mipmapFilter: "linear"
     });
 
     const colorTexture = device.createTexture({
         size: [image.width, image.height],
         format: "rgba8unorm",
+        mipLevelCount: getMipLevelCount(image.width, image.height),
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
     });
 
@@ -160,6 +162,8 @@ addDescription(
             height: image.height
         }
     );
+
+    generate2DMipmap(device, colorTexture);
 
     ///////////////////////
     // Uniform values
