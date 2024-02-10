@@ -169,15 +169,15 @@ addDescription(
     // Uniform values
     ////////////////////////
 
-    const projMatrix = mat4.create();
-    mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0);
+    const projectionMatrix = mat4.create();
+    mat4.perspectiveZO(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0);
 
     const viewMatrix = mat4.create();
     const eyePosition = vec3.fromValues(0, 0, 1);
     mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
 
     const viewProjectionMatrix = mat4.create();
-    mat4.multiply(viewProjectionMatrix, projMatrix, viewMatrix);
+    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
 
     // Uniform buffer for view projection matrix
     // used in lights and gBuffer passes
@@ -187,7 +187,6 @@ addDescription(
     });
 
     device.queue.writeBuffer(viewProjectionMatrixBuffer, 0, viewProjectionMatrix);
-
 
     ///////////////////////////////
     // Lights pass
@@ -350,21 +349,24 @@ addDescription(
     ////////////////////////////
 
     // Render targets
-    const gBufferPositionsTexture = device.createTexture({
+    let gBufferPositionsTexture = device.createTexture({
+        label: "gBuffer positions texture",
         size: [canvas.width, canvas.height],
         format: "rgba16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
         sampleCount: 4
     });
 
-    const gBufferNormalsTexture = device.createTexture({
+    let gBufferNormalsTexture = device.createTexture({
+        label: "gBuffer normals texture",
         size: [canvas.width, canvas.height],
         format: "rgba16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
         sampleCount: 4
     });
 
-    const gBufferUVTexture = device.createTexture({
+    let gBufferUVTexture = device.createTexture({
+        label: "gBuffer uv texture",
         size: [canvas.width, canvas.height],
         format: "rg16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -646,7 +648,7 @@ addDescription(
     });
 
     // Bind group
-    const lightingBindGroup = device.createBindGroup({
+    let lightingBindGroup = device.createBindGroup({
         layout: lightingPipeline.getBindGroupLayout(0),
         entries: [
             {
@@ -695,7 +697,7 @@ addDescription(
     // Render pass descriptions
     //////////////////////////////
 
-    const msaaTexture = device.createTexture({
+    let msaaTexture = device.createTexture({
         label: 'msaa texture',
         size: [canvas.width, canvas.height],
         format: presentationFormat,
@@ -703,7 +705,7 @@ addDescription(
         sampleCount: 4
     });
     
-    const depthTexture = device.createTexture({
+    let depthTexture = device.createTexture({
         label: 'depth texture',
         size: [canvas.width, canvas.height],
         format: "depth24plus",
@@ -769,6 +771,115 @@ addDescription(
             storeOp: "store",
         }]
     };
+
+    window.addEventListener("resize", () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        mat4.perspectiveZO(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
+        mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+        device.queue.writeBuffer(viewProjectionMatrixBuffer, 0, viewProjectionMatrix);
+
+        gBufferPositionsTexture.destroy();
+        gBufferPositionsTexture = device.createTexture({
+            label: "gBuffer positions texture",
+            size: [canvas.width, canvas.height],
+            format: "rgba16float",
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        gBufferNormalsTexture.destroy();
+        gBufferNormalsTexture = device.createTexture({
+            label: "gBuffer normals texture",
+            size: [canvas.width, canvas.height],
+            format: "rgba16float",
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        gBufferUVTexture.destroy();
+        gBufferUVTexture = device.createTexture({
+            label: "gBuffer uv texture",
+            size: [canvas.width, canvas.height],
+            format: "rg16float",
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });    
+
+        msaaTexture.destroy();
+        msaaTexture = device.createTexture({
+            label: 'msaa texture',
+            size: [canvas.width, canvas.height],
+            format: presentationFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        depthTexture.destroy();
+        depthTexture = device.createTexture({
+            label: "depth texture",
+            size: [canvas.width, canvas.height],
+            format: "depth24plus",
+            usage:  GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        lightingBindGroup = device.createBindGroup({
+            layout: lightingPipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: lightingEyePositionBuffer
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: lights.positions
+                    }
+                },
+                {
+                    binding: 2,
+                    resource: {
+                        buffer: lights.colors
+                    }
+                },
+                {
+                    binding: 3,
+                    resource: sampler
+                },
+                {
+                    binding: 4,
+                    resource: gBufferPositionsTexture.createView()
+                },
+                {
+                    binding: 5,
+                    resource: gBufferNormalsTexture.createView()
+                },
+                {
+                    binding: 6,
+                    resource: gBufferUVTexture.createView()
+                },
+                {
+                    binding: 7,
+                    resource: colorTexture.createView()
+                }
+            ]
+        });
+
+        lightsRenderPassDescription.colorAttachments[0].view = msaaTexture.createView()
+        lightsRenderPassDescription.depthStencilAttachment.view = depthTexture.createView()
+
+        gBufferRenderPassDescription.colorAttachments[0].view = gBufferPositionsTexture.createView()
+        gBufferRenderPassDescription.colorAttachments[1].view = gBufferNormalsTexture.createView()
+        gBufferRenderPassDescription.colorAttachments[2].view = gBufferUVTexture.createView()
+        gBufferRenderPassDescription.depthStencilAttachment.view = depthTexture.createView()
+
+        lightingRenderPassDescription.colorAttachments[0].view = msaaTexture.createView()
+    });
 
     let lastTime;
     function draw(time) {

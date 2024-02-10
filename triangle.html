@@ -173,7 +173,7 @@ addDescription(
     // with 1 render pass.
     ////////////////////////////////////
 
-    const msaaTexture = device.createTexture({
+    let msaaTexture = device.createTexture({
         label: 'msaa texture',
         size: [canvas.width, canvas.height],
         format: presentationFormat,
@@ -181,29 +181,51 @@ addDescription(
         sampleCount: 4
     });
 
-    const commandEncoder = device.createCommandEncoder();
-    const renderPass = commandEncoder.beginRenderPass({
-        colorAttachments: [{
-            view: msaaTexture.createView(),
-            resolveTarget: context.getCurrentTexture().createView(),
-            loadOp: 'clear',
-            storeOp: 'store',
-            clearValue: [0, 0, 0, 1]
-        }]
+    function draw() {
+        const commandEncoder = device.createCommandEncoder();
+        const renderPass = commandEncoder.beginRenderPass({
+            colorAttachments: [{
+                view: msaaTexture.createView(),
+                resolveTarget: context.getCurrentTexture().createView(),
+                loadOp: 'clear',
+                storeOp: 'store',
+                clearValue: [0, 0, 0, 1]
+            }]
+        });
+        renderPass.setPipeline(pipeline);
+
+        // First argument here refers to array index
+        // in pipeline vertexState.vertexBuffers
+        renderPass.setVertexBuffer(0, positionBuffer);
+        renderPass.setVertexBuffer(1, colorBuffer);
+        
+        // Draw 3 vertices.
+        renderPass.draw(3);
+
+        renderPass.end();
+
+        device.queue.submit([commandEncoder.finish()]);
+    }
+
+    window.addEventListener("resize", () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        msaaTexture.destroy();
+        msaaTexture = device.createTexture({
+            label: 'msaa texture',
+            size: [canvas.width, canvas.height],
+            format: presentationFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        draw();
     });
-    renderPass.setPipeline(pipeline);
 
-    // First argument here refers to array index
-    // in pipeline vertexState.vertexBuffers
-    renderPass.setVertexBuffer(0, positionBuffer);
-    renderPass.setVertexBuffer(1, colorBuffer);
+    draw();
+
     
-    // Draw 3 vertices.
-    renderPass.draw(3);
-
-    renderPass.end();
-
-    device.queue.submit([commandEncoder.finish()]);
 })();
 </script>
 </body>

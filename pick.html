@@ -124,15 +124,15 @@ addDescription(
      ///////////////////////
     // Uniform values
     ////////////////////////
-    let projMatrix = mat4.create();
-    mat4.perspectiveZO(projMatrix, Math.PI / 2, canvas.width / canvas.height, 0.5, 6.0);
+    let projectionMatrix = mat4.create();
+    mat4.perspectiveZO(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.5, 6.0);
 
     let viewMatrix = mat4.create();
     let eyePosition = vec3.fromValues(0, 0, 1);
     mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
 
     let viewProjectionMatrix = mat4.create();
-    mat4.multiply(viewProjectionMatrix, projMatrix, viewMatrix);
+    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
 
     let lightPosition = vec3.fromValues(1, 1, 0.5);  
 
@@ -144,13 +144,13 @@ addDescription(
     /////////////////////
 
     // Picking render targets
-    const pickTexture = device.createTexture({
+    let pickTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "rgba8unorm",
         usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    const pickDepthTexture = device.createTexture({
+    let pickDepthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "depth24plus",
         usage:  GPUTextureUsage.RENDER_ATTACHMENT
@@ -229,7 +229,7 @@ addDescription(
     ///////////////////
 
     // Render targets
-    const msaaTexture = device.createTexture({
+    let msaaTexture = device.createTexture({
         label: 'msaa texture',
         size: [canvas.width, canvas.height],
         format: presentationFormat,
@@ -237,7 +237,7 @@ addDescription(
         sampleCount: 4
     });
 
-    const drawDepthTexture = device.createTexture({
+    let drawDepthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "depth24plus",
         usage:  GPUTextureUsage.RENDER_ATTACHMENT,
@@ -498,13 +498,62 @@ addDescription(
     };
 
     // MOUSE HANDLER FOR PICKING
-    let mouseX = 0;
-    let mouseY = 0;
+    let mouseX = -1;
+    let mouseY = -1;
     let lastPickIndex = -1;
 
-    window.addEventListener("mousemove", function(event) {
+    canvas.addEventListener("mousemove", function(event) {
         mouseX = event.clientX;
         mouseY = event.clientY;
+    });
+
+    window.addEventListener("resize", () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        mouseX = -1;
+        mouseY = -1;
+
+        mat4.perspectiveZO(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
+        mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+        device.queue.writeBuffer(sceneUniformBuffer, 0, viewProjectionMatrix);
+
+        pickTexture.destroy();
+        pickTexture = device.createTexture({
+            size: [canvas.width, canvas.height],
+            format: "rgba8unorm",
+            usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
+        });
+
+        pickDepthTexture.destroy();
+        pickDepthTexture = device.createTexture({
+            size: [canvas.width, canvas.height],
+            format: "depth24plus",
+            usage:  GPUTextureUsage.RENDER_ATTACHMENT
+        });
+
+        msaaTexture.destroy();
+        msaaTexture = device.createTexture({
+            label: 'msaa texture',
+            size: [canvas.width, canvas.height],
+            format: presentationFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        drawDepthTexture.destroy();
+        drawDepthTexture = device.createTexture({
+            size: [canvas.width, canvas.height],
+            format: "depth24plus",
+            usage:  GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        pickRenderPassDescription.colorAttachments[0].view = pickTexture.createView()
+        pickRenderPassDescription.depthStencilAttachment.view = pickDepthTexture.createView()
+
+        drawRenderPassDescription.colorAttachments[0].view = msaaTexture.createView()
+        drawRenderPassDescription.depthStencilAttachment.view = drawDepthTexture.createView()
     });
         
 
@@ -529,7 +578,7 @@ addDescription(
         // Picking
         //////////////
 
-        if (pickBuffer.mapState === "unmapped") {
+        if (mouseX > -1 && pickBuffer.mapState === "unmapped") {
             
             const pickCommandEncoder = device.createCommandEncoder();
             const pickPass = pickCommandEncoder.beginRenderPass(pickRenderPassDescription);

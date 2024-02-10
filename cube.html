@@ -307,7 +307,7 @@ addDescription(
     // Render pass description
     ///////////////////////////
 
-    const msaaTexture = device.createTexture({
+    let msaaTexture = device.createTexture({
         label: 'msaa texture',
         size: [canvas.width, canvas.height],
         format: presentationFormat,
@@ -315,12 +315,12 @@ addDescription(
         sampleCount: 4
     });
     
-    const depthTexture = device.createTexture({
+    let depthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "depth24plus",
         usage:  GPUTextureUsage.RENDER_ATTACHMENT,
         sampleCount: 4
-    })
+    });
 
     const renderPassDescription = {
         colorAttachments: [{
@@ -337,6 +337,36 @@ addDescription(
             depthStoreOp: "store"
         }
     };
+
+    window.addEventListener("resize", () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        mat4.perspectiveZO(projectionMatrix, Math.PI / 2, canvas.width / canvas.height, 0.1, 10.0)
+        mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+        device.queue.writeBuffer(vertexUniformBuffer, 64, viewProjectionMatrix);
+
+        msaaTexture.destroy();
+        msaaTexture = device.createTexture({
+            label: 'msaa texture',
+            size: [canvas.width, canvas.height],
+            format: presentationFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        depthTexture.destroy();
+        depthTexture = device.createTexture({
+            size: [canvas.width, canvas.height],
+            format: "depth24plus",
+            usage:  GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        renderPassDescription.colorAttachments[0].view = msaaTexture.createView()
+        renderPassDescription.depthStencilAttachment.view = depthTexture.createView()
+    });
 
     let lastTime;
     requestAnimationFrame(function draw(time) {

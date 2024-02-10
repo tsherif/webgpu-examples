@@ -356,7 +356,7 @@ addDescription(
     // Render pass description
     ///////////////////////////
 
-    const msaaTexture = device.createTexture({
+    let msaaTexture = device.createTexture({
         label: 'msaa texture',
         size: [canvas.width, canvas.height],
         format: presentationFormat,
@@ -364,7 +364,7 @@ addDescription(
         sampleCount: 4
     });
 
-    const renderPassDescriptor = {
+    const renderPassDescription = {
         colorAttachments: [{
             view: msaaTexture.createView(),
             resolveTarget: context.getCurrentTexture().createView(),
@@ -373,6 +373,22 @@ addDescription(
             clearValue: [0, 0, 0, 1]
         }]
     };
+
+    window.addEventListener("resize", () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        msaaTexture.destroy();
+        msaaTexture = device.createTexture({
+            label: 'msaa texture',
+            size: [canvas.width, canvas.height],
+            format: presentationFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        renderPassDescription.colorAttachments[0].view = msaaTexture.createView()
+    });
 
     requestAnimationFrame(function draw() {
 
@@ -396,13 +412,13 @@ addDescription(
         // Get current canvas texture
         ////////////////////////////////
 
-        renderPassDescriptor.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
+        renderPassDescription.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
 
         ///////////////////////
         // Encode render pass
         ///////////////////////
 
-        const renderPass = commandEncoder.beginRenderPass(renderPassDescriptor);
+        const renderPass = commandEncoder.beginRenderPass(renderPassDescription);
         renderPass.setPipeline(renderPipeline);
 
         // First argument here refers to array index
