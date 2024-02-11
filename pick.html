@@ -29,8 +29,18 @@
 -->
 <body>
 <canvas id="webgpu-canvas"></canvas>
+<div id="stats">
+    <div>
+        CPU Time: <span id="cpu-time"></span>
+    </div>
+    <div>
+        GPU Time: <span id="gpu-time"></span>
+    </div>
+</div>
 <script type="module">
 import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap } from "./utils/utils.js";
+import { Timer } from "./utils/Timer.js";
+
 const { mat4, vec3 } = glMatrix;
 
 checkSupport();
@@ -57,7 +67,9 @@ addDescription(
     // Set up device and canvas context
     ////////////////////////////////////
 
-    const device = await adapter.requestDevice();
+    const device = await adapter.requestDevice({
+        requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
+    });
     
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -68,6 +80,11 @@ addDescription(
         device,
         format: presentationFormat
     });
+
+    const timer = new Timer(device);
+
+    const cpuTimeDisplay = document.getElementById("cpu-time");
+    const gpuTimeDisplay = document.getElementById("gpu-time");
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -478,7 +495,8 @@ addDescription(
             depthClearValue: 1,
             depthLoadOp: "clear",
             depthStoreOp: "store"
-        }
+        },
+        timestampWrites: timer.passDescriptor(Timer.PASS_START)
     };
 
     const drawRenderPassDescription = {
@@ -496,6 +514,9 @@ addDescription(
             depthStoreOp: "store"
         }
     };
+
+    const timestampWritesPicked = timer.passDescriptor(Timer.PASS_END);
+    const timestampWritesNoPick = timer.passDescriptor(Timer.PASS_START | Timer.PASS_END);
 
     // MOUSE HANDLER FOR PICKING
     let mouseX = -1;
@@ -559,6 +580,8 @@ addDescription(
 
     let lastTime;
     function draw(time) {
+        timer.frameStart();
+
         lastTime = lastTime ?? time;
         const dt = time - lastTime;
         lastTime = time;
@@ -578,7 +601,9 @@ addDescription(
         // Picking
         //////////////
 
+        let picked = false;
         if (mouseX > -1 && pickBuffer.mapState === "unmapped") {
+            picked = true;
             
             const pickCommandEncoder = device.createCommandEncoder();
             const pickPass = pickCommandEncoder.beginRenderPass(pickRenderPassDescription);
@@ -643,6 +668,7 @@ addDescription(
         ///////////
 
         drawRenderPassDescription.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
+        drawRenderPassDescription.timestampWrites = picked ? timestampWritesPicked : timestampWritesNoPick;
 
         const drawCommandEncoder = device.createCommandEncoder();
         const renderPass = drawCommandEncoder.beginRenderPass(drawRenderPassDescription);
@@ -658,7 +684,15 @@ addDescription(
         }
 
         renderPass.end();
+
+        timer.beforeSubmit(drawCommandEncoder);
+
         device.queue.submit([drawCommandEncoder.finish()]);
+
+        timer.frameEnd();
+
+        cpuTimeDisplay.innerText = `${timer.cpuAverage.toFixed(2)}ms`;
+        gpuTimeDisplay.innerText = timer.hasGPUTimer ? `${timer.gpuAverage.toFixed(2)}ms` : "N/A";
 
         requestAnimationFrame(draw);
     }
