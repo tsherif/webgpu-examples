@@ -21,3 +21,13 @@ html, body {
 #description div {
 	margin: 4px;
 }
+
+#stats {
+	position: fixed;
+	bottom: 20px;
+	left: 20px;
+	background-color: grey;
+	color: white;
+	padding: 0.5em;
+	font-size: 18px;
+}
