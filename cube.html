@@ -31,14 +31,16 @@
 <canvas id="webgpu-canvas"></canvas>
 <div id="stats">
     <div>
-        CPU Time: <span id="cpu-time"></span>ms
+        CPU Time: <span id="cpu-time"></span>
     </div>
     <div>
-        GPU Time: <span id="gpu-time"></span>ms
+        GPU Time: <span id="gpu-time"></span>
     </div>
 </div>
 <script type="module">
 import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, getMipLevelCount, generate2DMipmap } from "./utils/utils.js";
+import { Timer } from "./utils/Timer.js";
+
 const { mat4 } = glMatrix;
 
 checkSupport();
@@ -81,29 +83,10 @@ addDescription(
         format: presentationFormat
     });
 
+    const timer = new Timer(device);
+
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const gpuTimeDisplay = document.getElementById("gpu-time");
-
-    let timestampQuerySet;
-    let timestampResolveBuffer;
-    let timestampResultBuffer;
-
-    if (hasGPUTimer) {
-        timestampQuerySet = device.createQuerySet({
-            type: "timestamp",
-            count: 2
-        });
-
-        timestampResolveBuffer = device.createBuffer({
-            size: timestampQuerySet.count * 8,
-            usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC
-        });
-
-        timestampResultBuffer = device.createBuffer({
-            size: timestampResolveBuffer.size,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
-    }
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -371,16 +354,9 @@ addDescription(
             depthClearValue: 1,
             depthLoadOp: 'clear',
             depthStoreOp: "store"
-        }
+        },
+        timestampWrites: timer.passDescriptor(Timer.PASS_START | Timer.PASS_END)
     };
-
-    if (hasGPUTimer) {
-        renderPassDescription.timestampWrites = {
-            querySet: timestampQuerySet,
-            beginningOfPassWriteIndex: 0,
-            endOfPassWriteIndex: 1
-        }
-    }
 
     window.addEventListener("resize", () => {
         canvas.width = window.innerWidth;
@@ -413,12 +389,8 @@ addDescription(
     });
 
     let lastTime;
-    let cpuTime = 0;
-    let cpuTimeCount = 0;
-    let gpuTime = 0;
-    let gpuTimeCount = 0;
     requestAnimationFrame(function draw(time) {
-        const cpuStartTime = performance.now();
+        timer.frameStart();
 
         lastTime = lastTime ?? time;
         const dt = time - lastTime;
@@ -456,44 +428,14 @@ addDescription(
         renderPass.draw(numVertices, 1);
         renderPass.end();
 
-        if (hasGPUTimer && timestampResultBuffer.mapState === "unmapped") {
-            commandEncoder.resolveQuerySet(timestampQuerySet, 0, timestampQuerySet.count, timestampResolveBuffer, 0);
-            commandEncoder.copyBufferToBuffer(timestampResolveBuffer, 0, timestampResultBuffer, 0, timestampResultBuffer.size);
-        }
+        timer.beforeSubmit(commandEncoder);
 
         device.queue.submit([commandEncoder.finish()]);
 
-        if (hasGPUTimer && timestampResultBuffer.mapState === "unmapped") {
-            timestampResultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-                const [start, end] = new BigInt64Array(timestampResultBuffer.getMappedRange());
-                timestampResultBuffer.unmap();
+        timer.frameEnd();
 
-                const time = Number(end - start);
-
-                if (time < 0) {
-                    gpuTime = 0;
-                    gpuTimeCount = 0;
-                }
-
-                gpuTime += time;
-                ++gpuTimeCount;
-
-                if (gpuTimeCount === 100) {
-                    gpuTimeDisplay.innerText = (gpuTime / 100 / 1000000).toFixed(2);
-                    gpuTime = 0;
-                    gpuTimeCount = 0;
-                }
-            });
-        }
-
-        cpuTime += performance.now() - cpuStartTime;
-        ++cpuTimeCount;
-
-        if (cpuTimeCount === 100) {
-            cpuTimeDisplay.innerText = (cpuTime / 100).toFixed(2);
-            cpuTime = 0;
-            cpuTimeCount = 0;
-        }
+        cpuTimeDisplay.innerText = `${timer.cpuAverage.toFixed(2)}ms`;
+        gpuTimeDisplay.innerText = timer.hasGPUTimer ? `${timer.gpuAverage.toFixed(2)}ms` : "N/A";
 
         requestAnimationFrame(draw);
     });
