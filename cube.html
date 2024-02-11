@@ -63,14 +63,12 @@ addDescription(
 
     const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
-    const hasGPUTimer = adapter.features.has("timestamp-query");
-
     ////////////////////////////////////
     // Set up device and canvas context
     ////////////////////////////////////
 
     const device = await adapter.requestDevice({
-        requiredFeatures: hasGPUTimer ? ["timestamp-query"] : []
+        requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
     });
     
     const canvas = document.getElementById("webgpu-canvas");
