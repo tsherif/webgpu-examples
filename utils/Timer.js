@@ -1,4 +1,4 @@
-const FRAME_COUNT = 20;
+const FRAME_COUNT = 50;
 
 export class Timer {
     static PASS_START = 1;

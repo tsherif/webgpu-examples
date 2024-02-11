@@ -28,8 +28,17 @@
 -->
 <body>
 <canvas id="webgpu-canvas"></canvas>
+<div id="stats">
+    <div>
+        CPU Time: <span id="cpu-time"></span>
+    </div>
+    <div>
+        GPU Time: <span id="gpu-time"></span>
+    </div>
+</div>
 <script type="module">
 import { checkSupport, addDescription } from "./utils/utils.js";
+import { Timer } from "./utils/Timer.js";
 
 const WORKGROUP_SIZE = 64;
 const NUM_WORKGROUPS = 1000;
@@ -55,7 +64,9 @@ addDescription(
     // Set up device and canvas context
     ////////////////////////////////////
 
-    const device = await adapter.requestDevice();
+    const device = await adapter.requestDevice({
+        requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
+    });
 
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -66,6 +77,11 @@ addDescription(
         device,
         format: presentationFormat
     });
+
+    const timer = new Timer(device);
+
+    const cpuTimeDisplay = document.getElementById("cpu-time");
+    const gpuTimeDisplay = document.getElementById("gpu-time");
 
     ////////////////////////////////////////////////////////
     // Create buffers for compute pass
@@ -173,7 +189,6 @@ addDescription(
     // Compute bind group
     ////////////////////////
 
-
     const computeBindGroup = device.createBindGroup({
         layout: computePipeline.getBindGroupLayout(0),
         entries: [
@@ -197,6 +212,10 @@ addDescription(
             }
         ]
     });
+
+    const computePassDescription = {
+        timestampWrites: timer.passDescriptor(Timer.PASS_START)
+    };
 
     ///////////////////////////////////
     // Create buffers for render pass
@@ -371,7 +390,8 @@ addDescription(
             loadOp: "clear",
             storeOp: "store",
             clearValue: [0, 0, 0, 1]
-        }]
+        }],
+        timestampWrites: timer.passDescriptor(Timer.PASS_END)
     };
 
     window.addEventListener("resize", () => {
@@ -391,6 +411,7 @@ addDescription(
     });
 
     requestAnimationFrame(function draw() {
+        timer.frameStart();
 
         /////////////////////////
         // Set up command buffer
@@ -402,7 +423,7 @@ addDescription(
         // Encode compute pass
         ///////////////////////
 
-        const computePass = commandEncoder.beginComputePass();
+        const computePass = commandEncoder.beginComputePass(computePassDescription);
         computePass.setPipeline(computePipeline);
         computePass.setBindGroup(0, computeBindGroup);
         computePass.dispatchWorkgroups(NUM_WORKGROUPS);
@@ -435,7 +456,14 @@ addDescription(
         // Submit command buffer
         //////////////////////////
 
+        timer.beforeSubmit(commandEncoder);
+
         device.queue.submit([commandEncoder.finish()]);
+
+        timer.frameEnd();
+
+        cpuTimeDisplay.innerText = `${timer.cpuAverage.toFixed(2)}ms`;
+        gpuTimeDisplay.innerText = timer.hasGPUTimer ? `${timer.gpuAverage.toFixed(2)}ms` : "N/A";
 
         requestAnimationFrame(draw);
     });
