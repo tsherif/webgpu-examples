@@ -49,7 +49,7 @@ import { Timer } from "./utils/Timer.js";
 
 const { mat4, vec3 } = glMatrix;
 const NUM_BOXES = 256;
-const NUM_LIGHTS = 32;
+const NUM_LIGHTS = 256;
 
 checkSupport();
 addDescription(
@@ -297,9 +297,6 @@ addDescription(
                 }
             ]
         },
-        multisample: {
-            count: 4
-        },
         primitive: {
             topology: "triangle-list",
             cullMode: "back"
@@ -376,7 +373,6 @@ addDescription(
         size: [canvas.width, canvas.height],
         format: "rgba16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
     });
 
     let gBufferNormalsTexture = device.createTexture({
@@ -384,7 +380,6 @@ addDescription(
         size: [canvas.width, canvas.height],
         format: "rgba16float",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
     });
 
     let gBufferColorsTexture = device.createTexture({
@@ -392,7 +387,6 @@ addDescription(
         size: [canvas.width, canvas.height],
         format: "rgba8unorm",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
     });    
 
     // Shader module
@@ -498,9 +492,6 @@ addDescription(
                 }
             ]
         },
-        multisample: {
-            count: 4
-        },
         primitive: {
             topology: "triangle-list",
             cullMode: "back"
@@ -599,24 +590,25 @@ addDescription(
             @group(0) @binding(0) var<uniform>  eyePosition: vec4f;
             @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
             @group(0) @binding(2) var<uniform> lightColors: array<vec4f, ${NUM_LIGHTS}>;
-            @group(0) @binding(3) var positionTexture: texture_multisampled_2d<f32>;
-            @group(0) @binding(4) var normalTexture: texture_multisampled_2d<f32>;
-            @group(0) @binding(5) var colorTexture: texture_multisampled_2d<f32>;
+            @group(0) @binding(3) var positionTexture: texture_2d<f32>;
+            @group(0) @binding(4) var normalTexture: texture_2d<f32>;
+            @group(0) @binding(5) var colorTexture: texture_2d<f32>;
 
             @fragment
             fn fs(
                 @builtin(position) fragmentPosition: vec4f, 
-                @builtin(sample_index) sampleIndex: u32
             ) -> @location(0) vec4f {
                 let canvasPosition = vec2u(fragmentPosition.xy);
 
-                if (fragmentPosition.z == 1.0) {
+                let positionSample = textureLoad(positionTexture, canvasPosition, 0);
+
+                if (positionSample.w == 0.0) {
                     discard;
                 }
 
-                let position = textureLoad(positionTexture, canvasPosition, sampleIndex).xyz;
-                let normal = normalize(textureLoad(normalTexture, canvasPosition, sampleIndex).xyz);
-                let surfaceColor = textureLoad(colorTexture, canvasPosition, sampleIndex).rgb;
+                let position = positionSample.xyz;
+                let normal = normalize(textureLoad(normalTexture, canvasPosition, 0).xyz);
+                let surfaceColor = textureLoad(colorTexture, canvasPosition, 0).rgb;
 
                 let eyeDirection: vec3f = normalize(eyePosition.xyz - position);
                 var color = vec3f(0.0);
@@ -666,9 +658,6 @@ addDescription(
                 format: presentationFormat,
             }],
         },
-        multisample: {
-            count: 4
-        },
         primitive: {
             topology: "triangle-strip",
             cullMode: "back"
@@ -716,29 +705,19 @@ addDescription(
     //////////////////////////////
     // Render pass descriptions
     //////////////////////////////
-
-    let msaaTexture = device.createTexture({
-        label: 'msaa texture',
-        size: [canvas.width, canvas.height],
-        format: presentationFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
-    });
     
     let depthTexture = device.createTexture({
         label: 'depth texture',
         size: [canvas.width, canvas.height],
         format: "depth24plus",
         usage:  GPUTextureUsage.RENDER_ATTACHMENT,
-        sampleCount: 4
     });
 
     const lightsRenderPassDescription = {
         label: 'lights render pass',
         colorAttachments: [
             {
-                view: msaaTexture.createView(),
-                resolveTarget: context.getCurrentTexture().createView(),
+                view: context.getCurrentTexture().createView(),
                 loadOp: "clear",
                 storeOp: "store",
                 clearValue: [0, 0, 0, 1]
@@ -787,8 +766,7 @@ addDescription(
     const lightingRenderPassDescription = {
         label: 'lighting render pass',
         colorAttachments: [{
-            view: msaaTexture.createView(),
-            resolveTarget: context.getCurrentTexture().createView(),
+            view: context.getCurrentTexture().createView(),
             loadOp: "load",
             storeOp: "store",
         }],
@@ -810,7 +788,6 @@ addDescription(
             size: [canvas.width, canvas.height],
             format: "rgba16float",
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-            sampleCount: 4
         });
 
         gBufferNormalsTexture.destroy();
@@ -819,26 +796,15 @@ addDescription(
             size: [canvas.width, canvas.height],
             format: "rgba16float",
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-            sampleCount: 4
         });
 
-        gBufferUVTexture.destroy();
-        gBufferUVTexture = device.createTexture({
-            label: "gBuffer uv texture",
+        gBufferColorsTexture.destroy();
+        gBufferColorsTexture = device.createTexture({
+            label: "gBuffer colors texture",
             size: [canvas.width, canvas.height],
-            format: "rg16float",
+            format: "rgba8unorm",
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-            sampleCount: 4
-        });    
-
-        msaaTexture.destroy();
-        msaaTexture = device.createTexture({
-            label: 'msaa texture',
-            size: [canvas.width, canvas.height],
-            format: presentationFormat,
-            usage: GPUTextureUsage.RENDER_ATTACHMENT,
-            sampleCount: 4
-        });
+        });     
 
         depthTexture.destroy();
         depthTexture = device.createTexture({
@@ -846,7 +812,6 @@ addDescription(
             size: [canvas.width, canvas.height],
             format: "depth24plus",
             usage:  GPUTextureUsage.RENDER_ATTACHMENT,
-            sampleCount: 4
         });
 
         lightingBindGroup = device.createBindGroup({
@@ -880,20 +845,17 @@ addDescription(
                 },
                 {
                     binding: 5,
-                    resource: gBufferUVTexture.createView()
+                    resource: gBufferColorsTexture.createView()
                 }
             ]
         });
 
-        lightsRenderPassDescription.colorAttachments[0].view = msaaTexture.createView()
         lightsRenderPassDescription.depthStencilAttachment.view = depthTexture.createView()
 
         gBufferRenderPassDescription.colorAttachments[0].view = gBufferPositionsTexture.createView()
         gBufferRenderPassDescription.colorAttachments[1].view = gBufferNormalsTexture.createView()
-        gBufferRenderPassDescription.colorAttachments[2].view = gBufferUVTexture.createView()
+        gBufferRenderPassDescription.colorAttachments[2].view = gBufferColorsTexture.createView()
         gBufferRenderPassDescription.depthStencilAttachment.view = depthTexture.createView()
-
-        lightingRenderPassDescription.colorAttachments[0].view = msaaTexture.createView()
     });
 
     let lastTime;
@@ -942,7 +904,7 @@ addDescription(
         // Draw lights as spheres to canvas
         /////////////////////////////////////
 
-        lightsRenderPassDescription.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
+        lightsRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
         const lightsRenderPass = commandEncoder.beginRenderPass(lightsRenderPassDescription);
         lightsRenderPass.setPipeline(lightsPipeline);
@@ -978,7 +940,7 @@ addDescription(
         // GBuffer.
         //////////////////////////////////
 
-        lightingRenderPassDescription.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
+        lightingRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
         const lightingRenderPass = commandEncoder.beginRenderPass(lightingRenderPassDescription);
 
