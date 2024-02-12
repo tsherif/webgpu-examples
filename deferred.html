@@ -49,7 +49,7 @@ import { Timer } from "./utils/Timer.js";
 
 const { mat4, vec3 } = glMatrix;
 const NUM_BOXES = 256;
-const NUM_LIGHTS = 256;
+const NUM_LIGHTS = 32;
 
 checkSupport();
 addDescription(
@@ -96,7 +96,7 @@ addDescription(
     const gBufferTimeDisplay = document.getElementById("gbuffer-time");
     const lightingTimeDisplay = document.getElementById("lighting-time");
 
-    const timer = new Timer(device, ["lights", "gbuffer", "lighting"]);
+    const timer = new Timer(device, ["lights", "gbuffer", "lighting"], 10);
 
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -387,10 +387,10 @@ addDescription(
         sampleCount: 4
     });
 
-    let gBufferUVTexture = device.createTexture({
-        label: "gBuffer uv texture",
+    let gBufferColorsTexture = device.createTexture({
+        label: "gBuffer colors texture",
         size: [canvas.width, canvas.height],
-        format: "rg16float",
+        format: "rgba8unorm",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
         sampleCount: 4
     });    
@@ -429,15 +429,18 @@ addDescription(
             struct FSOut {
                 @location(0) position: vec4f,
                 @location(1) normal: vec4f,
-                @location(2) uv: vec2f,
+                @location(2) color: vec4f,
             }
+
+            @group(0) @binding(2) var textureSampler: sampler;
+            @group(0) @binding(3) var colorTexture: texture_2d<f32>;
 
             @fragment
             fn fs(fsIn: VSOut) -> FSOut {
                 var fsOut: FSOut;
                 fsOut.position = vec4f(fsIn.worldPosition, 1.0);
                 fsOut.normal = vec4f(fsIn.normal, 0.0);
-                fsOut.uv = fsIn.uv;
+                fsOut.color = textureSample(colorTexture, textureSampler, fsIn.uv);
 
                 return fsOut;
             }
@@ -491,7 +494,7 @@ addDescription(
                     format: "rgba16float"
                 },
                 {
-                    format: "rg16float"
+                    format: "rgba8unorm"
                 }
             ]
         },
@@ -546,6 +549,14 @@ addDescription(
                     resource: {
                         buffer: uniformBuffer
                     }
+                },
+                {
+                    binding: 2,
+                    resource: sampler
+                },
+                {
+                    binding: 3,
+                    resource: colorTexture.createView()
                 }
             ]
         });
@@ -588,29 +599,24 @@ addDescription(
             @group(0) @binding(0) var<uniform>  eyePosition: vec4f;
             @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
             @group(0) @binding(2) var<uniform> lightColors: array<vec4f, ${NUM_LIGHTS}>;
-            @group(0) @binding(3) var textureSampler: sampler;
-            @group(0) @binding(4) var positionTexture: texture_multisampled_2d<f32>;
-            @group(0) @binding(5) var normalTexture: texture_multisampled_2d<f32>;
-            @group(0) @binding(6) var uvTexture: texture_multisampled_2d<f32>;
-            @group(0) @binding(7) var colorTexture: texture_2d<f32>;
+            @group(0) @binding(3) var positionTexture: texture_multisampled_2d<f32>;
+            @group(0) @binding(4) var normalTexture: texture_multisampled_2d<f32>;
+            @group(0) @binding(5) var colorTexture: texture_multisampled_2d<f32>;
 
             @fragment
             fn fs(
-                @builtin(position) canvasPosition: vec4f, 
+                @builtin(position) fragmentPosition: vec4f, 
                 @builtin(sample_index) sampleIndex: u32
             ) -> @location(0) vec4f {
-                let index = vec2u(canvasPosition.xy);
-                let positionSample = textureLoad(positionTexture, index, sampleIndex);
-                let normal = normalize(textureLoad(normalTexture, index, sampleIndex).xyz);
-                let uv = textureLoad(uvTexture, index, sampleIndex).xy;
+                let canvasPosition = vec2u(fragmentPosition.xy);
 
-                let surfaceColor: vec3f = textureSample(colorTexture, textureSampler, uv).rgb;
-
-                if (positionSample.w == 0.0) {
+                if (fragmentPosition.z == 1.0) {
                     discard;
                 }
 
-                let position = positionSample.xyz;
+                let position = textureLoad(positionTexture, canvasPosition, sampleIndex).xyz;
+                let normal = normalize(textureLoad(normalTexture, canvasPosition, sampleIndex).xyz);
+                let surfaceColor = textureLoad(colorTexture, canvasPosition, sampleIndex).rgb;
 
                 let eyeDirection: vec3f = normalize(eyePosition.xyz - position);
                 var color = vec3f(0.0);
@@ -693,23 +699,15 @@ addDescription(
             },
             {
                 binding: 3,
-                resource: sampler
-            },
-            {
-                binding: 4,
                 resource: gBufferPositionsTexture.createView()
             },
             {
-                binding: 5,
+                binding: 4,
                 resource: gBufferNormalsTexture.createView()
             },
             {
-                binding: 6,
-                resource: gBufferUVTexture.createView()
-            },
-            {
-                binding: 7,
-                resource: colorTexture.createView()
+                binding: 5,
+                resource: gBufferColorsTexture.createView()
             }
         ]
     });
@@ -771,7 +769,7 @@ addDescription(
                 clearValue: [0, 0, 0, 0]
             },
             {
-                view: gBufferUVTexture.createView(),
+                view: gBufferColorsTexture.createView(),
                 loadOp: "clear",
                 storeOp: "store",
                 clearValue: [0, 0, 0, 0]
@@ -874,23 +872,15 @@ addDescription(
                 },
                 {
                     binding: 3,
-                    resource: sampler
-                },
-                {
-                    binding: 4,
                     resource: gBufferPositionsTexture.createView()
                 },
                 {
-                    binding: 5,
+                    binding: 4,
                     resource: gBufferNormalsTexture.createView()
                 },
                 {
-                    binding: 6,
+                    binding: 5,
                     resource: gBufferUVTexture.createView()
-                },
-                {
-                    binding: 7,
-                    resource: colorTexture.createView()
                 }
             ]
         });
