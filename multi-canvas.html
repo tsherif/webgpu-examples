@@ -39,17 +39,8 @@
   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 -->
 <body>
-<div id="stats">
-    <div>
-        CPU Time: <span id="cpu-time"></span>
-    </div>
-    <div>
-        GPU Time: <span id="gpu-time"></span>
-    </div>
-</div>
 <script type="module">
 import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap } from "./utils/utils.js";
-import { Timer } from "./utils/Timer.js";
 
 const { mat4 } = glMatrix;
 const NUM_CANVASES = 100;
@@ -82,11 +73,6 @@ addDescription(
         requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
     });
 
-    const timer = new Timer(device);
-
-    const cpuTimeDisplay = document.getElementById("cpu-time");
-    const gpuTimeDisplay = document.getElementById("gpu-time");
-    
     ////////////////////////////////////////
     // Create vertex buffers and load data
     ////////////////////////////////////////
@@ -385,13 +371,8 @@ addDescription(
         }
     });
 
-    canvases[0].renderPassDescriptor.timestampWrites =  timer.passDescriptor(Timer.PASS_START);
-    canvases.at(-1).renderPassDescriptor.timestampWrites =  timer.passDescriptor(Timer.PASS_END);
-
     let lastTime;
     requestAnimationFrame(function draw(time) {
-        timer.frameStart();
-
         lastTime = lastTime ?? time;
         const dt = time - lastTime;
         lastTime = time;
@@ -428,14 +409,7 @@ addDescription(
             renderPass.end();
         });
 
-        timer.beforeSubmit(commandEncoder);
-
         device.queue.submit([commandEncoder.finish()]);
-
-        timer.frameEnd();
-
-        cpuTimeDisplay.innerText = `${timer.cpuAverage.toFixed(2)}ms`;
-        gpuTimeDisplay.innerText = timer.hasGPUTimer ? `${timer.gpuAverage.toFixed(2)}ms` : "N/A";
 
         requestAnimationFrame(draw);
     });

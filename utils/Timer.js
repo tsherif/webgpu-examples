@@ -1,104 +1,128 @@
-const FRAME_COUNT = 50;
+const DEFAULT_SAMPLE_COUNT = 50;
 
 export class Timer {
-    static PASS_START = 1;
-    static PASS_END = 2;
-
-    constructor(device) {
+    constructor(device, passNames, sampleCount = DEFAULT_SAMPLE_COUNT) {
+        this.passNames = passNames.slice();
+        this.sampleCount = sampleCount;
         this.hasGPUTimer = false;
-        this.querySet = null;
-        this.resolveBuffer = null;
-        this.resultBuffer = null;
-        this.cpuTime = 0;
-        this.cpuTimeCount = 0;
-        this.cpuAverage = 0;
-        this.gpuTime = 0;
-        this.gpuTimeCount = 0;
-        this.gpuAverage = 0;
-        this.frameStartTime = 0;
+        this.cpuTimers = {};
+        this.cpuTimes = {};
+        this.passTimers = {};
+        this.gpuTimes = {}
 
         if (device.features.has("timestamp-query")) {
             this.hasGPUTimer = true;
 
-            this.querySet = device.createQuerySet({
-                type: "timestamp",
-                count: 2
+            passNames.forEach(passName => {
+                const querySet = device.createQuerySet({
+                    type: "timestamp",
+                    count: 2
+                });
+        
+                const resolveBuffer = device.createBuffer({
+                    size: querySet.count * 8,
+                    usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC
+                });
+        
+                const resultBuffer = device.createBuffer({
+                    size: resolveBuffer.size,
+                    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+                });   
+
+                this.passTimers[passName] = {
+                    querySet,
+                    resolveBuffer,
+                    resultBuffer,
+                    time: 0,
+                    timeCount: 0,
+                }
+
+                this.gpuTimes[passName] = 0;
             });
-    
-            this.resolveBuffer = device.createBuffer({
-                size: this.querySet.count * 8,
-                usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC
-            });
-    
-            this.resultBuffer = device.createBuffer({
-                size: this.resolveBuffer.size,
-                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-            });
+
+           
         }
     }
 
-    passDescriptor(flags) {
-        if (!this.hasGPUTimer) {
+    passDescriptor(passName) {
+        const passTimer = this.passTimers[passName];
+
+        if (!passTimer) {
             return undefined;
         }
 
-        const descriptor = {
-            querySet: this.querySet
+        return {
+            querySet: passTimer.querySet,
+            beginningOfPassWriteIndex: 0,
+            endOfPassWriteIndex: 1
         };
-
-        if (flags & Timer.PASS_START) {
-            descriptor.beginningOfPassWriteIndex = 0
-        }
-
-        if (flags & Timer.PASS_END) {
-            descriptor.endOfPassWriteIndex = 1
-        }
-
-        return descriptor;
     }
 
-    frameStart() {
-        this.frameStartTime = performance.now();
+    beforeSubmit(commandEncoder, passNames = this.passNames) {
+        passNames.forEach(passName => {
+            const passTimer = this.passTimers[passName];
+
+            if (passTimer && passTimer.resultBuffer.mapState === "unmapped") {
+                const { querySet, resolveBuffer, resultBuffer } = passTimer;
+
+                commandEncoder.resolveQuerySet(querySet, 0, querySet.count, resolveBuffer, 0);
+                commandEncoder.copyBufferToBuffer(resolveBuffer, 0, resultBuffer, 0, resultBuffer.size);
+            }
+        });
     }
 
-    beforeSubmit(commandEncoder) {
-        if (this.hasGPUTimer && this.resultBuffer.mapState === "unmapped") {
-            commandEncoder.resolveQuerySet(this.querySet, 0, this.querySet.count, this.resolveBuffer, 0);
-            commandEncoder.copyBufferToBuffer(this.resolveBuffer, 0, this.resultBuffer, 0, this.resultBuffer.size);
-        }
+    afterSubmit(passNames = this.passNames) {
+        passNames.forEach(passName => {
+            const passTimer = this.passTimers[passName];
+
+            if (passTimer && passTimer.resultBuffer.mapState === "unmapped") {
+                const { resultBuffer } = passTimer;
+                resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
+                    const [start, end] = new BigInt64Array(resultBuffer.getMappedRange());
+                    resultBuffer.unmap();
+    
+                    const time = Number(end - start);
+    
+                    if (time >= 0) {
+                        passTimer.time += time;
+                        ++passTimer.timeCount;
+                    } else {
+                        passTimer.time = 0;
+                        passTimer.timeCount = 0;
+                    }
+    
+                    if (passTimer.timeCount === this.sampleCount) {
+                        this.gpuTimes[passName] = passTimer.time / this.sampleCount / 1000000;
+                        passTimer.time = 0;
+                        passTimer.timeCount = 0;
+                    }
+                });
+            }
+        });
     }
 
-    frameEnd() {
-        if (this.hasGPUTimer && this.resultBuffer.mapState === "unmapped") {
-            this.resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-                const [start, end] = new BigInt64Array(this.resultBuffer.getMappedRange());
-                this.resultBuffer.unmap();
+    cpuTimeStart(timerName) {
+        this.cpuTimers[timerName] ??= {
+            startTime: 0,
+            time: 0,
+            timeCount: 0
+        };
+        this.cpuTimes[timerName] ??= 0;
 
-                const time = Number(end - start);
+        this.cpuTimers[timerName].startTime = performance.now();
+    }
 
-                if (time >= 0) {
-                    this.gpuTime += time;
-                    ++this.gpuTimeCount;
-                } else {
-                    this.gpuTime = 0;
-                    this.gpuTimeCount = 0;
-                }
 
-                if (this.gpuTimeCount === FRAME_COUNT) {
-                    this.gpuAverage = this.gpuTime / FRAME_COUNT / 1000000;
-                    this.gpuTime = 0;
-                    this.gpuTimeCount = 0;
-                }
-            });
-        }
+    cpuTimeEnd(timerName) {
+        const timer = this.cpuTimers[timerName];
 
-        this.cpuTime += performance.now() - this.frameStartTime;
-        ++this.cpuTimeCount;
+        timer.time += performance.now() - timer.startTime;
+        ++timer.timeCount;
 
-        if (this.cpuTimeCount === FRAME_COUNT) {
-            this.cpuAverage = this.cpuTime / FRAME_COUNT;
-            this.cpuTime = 0;
-            this.cpuTimeCount = 0;
+        if (timer.timeCount === this.sampleCount) {
+            this.cpuTimes[timerName] = timer.time / this.sampleCount;
+            timer.time = 0;
+            timer.timeCount = 0;
         }
     }
 
