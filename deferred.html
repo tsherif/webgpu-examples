@@ -871,8 +871,8 @@ addDescription(
         ///////////////////////////
 
         for (const box of boxes) {
-            box.rotate[0] += 0.0003 * dt;
-            box.rotate[1] += 0.0004 * dt;
+            box.rotate[0] += 0.001 * dt;
+            box.rotate[1] += 0.002 * dt;
 
             xformMatrix(box.modelMatrix, box.translate, box.rotate, box.scale);
             
