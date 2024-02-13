@@ -49,7 +49,7 @@ import { Timer } from "./utils/Timer.js";
 
 const { mat4, vec3 } = glMatrix;
 const NUM_BOXES = 256;
-const NUM_LIGHTS = 256;
+const NUM_LIGHTS = 64;
 
 checkSupport();
 addDescription(
@@ -314,9 +314,9 @@ addDescription(
     const lights = {
         data: new Array(NUM_LIGHTS).fill(null).map(() => ({
             position: [
-                randomRange(-4, 4),
-                randomRange(-4, 4),
-                randomRange(-4, 1)
+                randomRange(-3, 3),
+                randomRange(-3, 3),
+                randomRange(-2.5, 0.5)
             ],
             color: [
                 randomRange(0, 1),
@@ -324,9 +324,9 @@ addDescription(
                 randomRange(0, 1)
             ],
             offset: [
-                randomRange(-1, 1),
-                randomRange(-1, 1),
-                randomRange(-1, 1)
+                randomRange(-0.5, 0.5),
+                randomRange(-0.5, 0.5),
+                randomRange(-0.5, 0.5)
             ],
             t: randomRange(0, 2 * Math.PI),
         })),
@@ -508,7 +508,7 @@ addDescription(
         const translate = [
             randomRange(-3, 3),
             randomRange(-3, 3),
-            randomRange(-4, 0)
+            randomRange(-3, 0)
         ];
         const rotate = [
                 randomRange(0, 2 * Math.PI),
@@ -585,7 +585,7 @@ addDescription(
                 return position;
             }
 
-            const lightDampening = 0.08;
+            const lightDampening = 0.3;
 
             @group(0) @binding(0) var<uniform>  eyePosition: vec4f;
             @group(0) @binding(1) var<uniform> lightPositions: array<vec4f, ${NUM_LIGHTS}>;
@@ -871,8 +871,8 @@ addDescription(
         ///////////////////////////
 
         for (const box of boxes) {
-            box.rotate[0] += 0.0001 * dt;
-            box.rotate[1] += 0.0002 * dt;
+            box.rotate[0] += 0.0003 * dt;
+            box.rotate[1] += 0.0004 * dt;
 
             xformMatrix(box.modelMatrix, box.translate, box.rotate, box.scale);
             
@@ -885,7 +885,7 @@ addDescription(
         ///////////////////////////
 
         lights.data.forEach((light, i) => {
-            light.t = (light.t + 0.0004 * dt) % (2 * Math.PI);
+            light.t = (light.t + 0.0006 * dt) % (2 * Math.PI);
             const position = lights.positionData.subarray(i * 4, i * 4 + 3);
             vec3.scale(position, light.offset, Math.sin(light.t));
             vec3.add(position, light.position, position);
