@@ -29,6 +29,7 @@
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <div id="stats">
+    <div id="device-info"></div>
     <div>
         CPU Frame Time: <span id="cpu-time"></span>
     </div>
@@ -40,7 +41,7 @@
     </div>
 </div>
 <script type="module">
-import { checkSupport, addDescription } from "./utils/utils.js";
+import { checkSupport, addDescription, parseAdapterInfo } from "./utils/utils.js";
 import { Timer } from "./utils/Timer.js";
 
 const WORKGROUP_SIZE = 64;
@@ -67,9 +68,12 @@ addDescription(
     // Set up device and canvas context
     ////////////////////////////////////
 
-    const device = await adapter.requestDevice({
-        requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
-    });
+    const [adapterInfo, device] = await Promise.all([
+        adapter.requestAdapterInfo(),
+        adapter.requestDevice({
+            requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
+        })
+    ]);
 
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -80,6 +84,8 @@ addDescription(
         device,
         format: presentationFormat
     });
+
+    document.getElementById("device-info").innerText = parseAdapterInfo(adapterInfo);
 
     const timer = new Timer(device, ["compute", "draw"]);
 

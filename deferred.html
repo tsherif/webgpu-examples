@@ -30,6 +30,7 @@
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <div id="stats">
+    <div id="device-info"></div>
     <div>
         CPU Frame Time: <span id="cpu-time"></span>
     </div>
@@ -44,7 +45,7 @@
     </div>
 </div>
 <script type="module">
-import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, createQuad, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap } from "./utils/utils.js";
+import { checkSupport, addDescription, loadImageBitmaps, createCube, createSphere, createQuad, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap, parseAdapterInfo } from "./utils/utils.js";
 import { Timer } from "./utils/Timer.js";
 
 const { mat4, vec3 } = glMatrix;
@@ -74,12 +75,12 @@ addDescription(
     // Set up device and canvas context
     ////////////////////////////////////
 
-    const device = await adapter.requestDevice({
-        requiredLimits: {
-            maxColorAttachmentBytesPerSample: 40
-        },
-        requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
-    });
+    const [adapterInfo, device] = await Promise.all([
+        adapter.requestAdapterInfo(),
+        adapter.requestDevice({
+            requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
+        })
+    ]);
     
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -90,6 +91,8 @@ addDescription(
         device,
         format: presentationFormat
     });
+
+    document.getElementById("device-info").innerText = parseAdapterInfo(adapterInfo);
 
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const lightsTimeDisplay = document.getElementById("lights-time");

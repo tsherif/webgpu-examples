@@ -429,6 +429,18 @@ export function randomRange(min, max) {
     return min + Math.random() * (max - min);
 }
 
+export function parseAdapterInfo(info) {
+    let gpuInfo = "";
+    if (info.vendor) {
+        gpuInfo = `GPU: ${info.vendor}`;
+        if (info.architecture) {
+            gpuInfo += ` (${info.architecture})`
+        }
+    }
+
+    return gpuInfo;
+}
+
 export function getMipLevelCount(width, height = 0, depth = 0) {
     return 1 + Math.floor(Math.log2(Math.max(width, height, depth)));
 }
