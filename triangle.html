@@ -39,10 +39,9 @@ addDescription(
 );
 
 (async () => {
-    //////////////////////////////////////////
-    // Set up WebGPU adapter and load glslang
-    // to compile GLSL to SPIR-V
-    //////////////////////////////////////////
+    ///////////////////////////
+    // Set up WebGPU adapter
+    ///////////////////////////
 
     const adapter = await navigator.gpu.requestAdapter();
     const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
