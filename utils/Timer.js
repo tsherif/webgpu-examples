@@ -1,6 +1,9 @@
 const DEFAULT_SAMPLE_COUNT = 50;
 
 export class Timer {
+    static PASS_START = 1;
+    static PASS_END = 2;
+
     constructor(device, passNames, sampleCount = DEFAULT_SAMPLE_COUNT) {
         this.passNames = passNames.slice();
         this.sampleCount = sampleCount;
@@ -44,18 +47,26 @@ export class Timer {
         }
     }
 
-    passDescriptor(passName) {
+    passDescriptor(passName, flags = Timer.PASS_START | Timer.PASS_END) {
         const passTimer = this.passTimers[passName];
 
         if (!passTimer) {
             return undefined;
         }
 
-        return {
-            querySet: passTimer.querySet,
-            beginningOfPassWriteIndex: 0,
-            endOfPassWriteIndex: 1
+        const descriptor = {
+            querySet: passTimer.querySet
         };
+
+        if (flags & Timer.PASS_START) {
+            descriptor.beginningOfPassWriteIndex = 0;
+        }
+
+        if (flags & Timer.PASS_END) {
+            descriptor.endOfPassWriteIndex = 1;
+        }
+
+        return descriptor;
     }
 
     beforeSubmit(commandEncoder, passNames = this.passNames) {
