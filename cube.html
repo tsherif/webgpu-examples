@@ -87,7 +87,7 @@ addDescription(
 
     document.getElementById("device-info").innerText = parseAdapterInfo(adapterInfo);
 
-    const timer = new Timer(device, ["draw"]);
+    const timer = new Timer(device);
 
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const gpuTimeDisplay = document.getElementById("gpu-time");
@@ -359,7 +359,7 @@ addDescription(
             depthLoadOp: 'clear',
             depthStoreOp: "store"
         },
-        timestampWrites: timer.passDescriptor("draw")
+        timestampWrites: timer.gpuPassDescriptor("draw")
     };
 
     window.addEventListener("resize", () => {
@@ -432,11 +432,11 @@ addDescription(
         renderPass.draw(numVertices, 1);
         renderPass.end();
 
-        timer.beforeSubmit(commandEncoder);
+        timer.gpuBeforeSubmit(commandEncoder);
 
         device.queue.submit([commandEncoder.finish()]);
 
-        timer.afterSubmit();
+        timer.gpuAfterSubmit();
         timer.cpuTimeEnd("frame");
 
         cpuTimeDisplay.innerText = `${timer.cpuTimes["frame"].toFixed(2)}ms`;

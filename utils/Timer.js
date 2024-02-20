@@ -4,58 +4,48 @@ export class Timer {
     static PASS_START = 1;
     static PASS_END = 2;
 
-    constructor(device, passNames, sampleCount = DEFAULT_SAMPLE_COUNT) {
-        this.passNames = passNames.slice();
+    constructor(device, sampleCount = DEFAULT_SAMPLE_COUNT) {
+        this.device = device;
         this.sampleCount = sampleCount;
-        this.hasGPUTimer = false;
+        this.hasGPUTimer = device.features.has("timestamp-query");
         this.cpuTimers = {};
         this.cpuTimes = {};
-        this.passTimers = {};
+        this.gpuTimers = {};
         this.gpuTimes = {}
-
-        if (device.features.has("timestamp-query")) {
-            this.hasGPUTimer = true;
-
-            passNames.forEach(passName => {
-                const querySet = device.createQuerySet({
-                    type: "timestamp",
-                    count: 2
-                });
-        
-                const resolveBuffer = device.createBuffer({
-                    size: querySet.count * 8,
-                    usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC
-                });
-        
-                const resultBuffer = device.createBuffer({
-                    size: resolveBuffer.size,
-                    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-                });   
-
-                this.passTimers[passName] = {
-                    querySet,
-                    resolveBuffer,
-                    resultBuffer,
-                    time: 0,
-                    timeCount: 0,
-                }
-
-                this.gpuTimes[passName] = 0;
-            });
-
-           
-        }
     }
 
-    passDescriptor(passName, flags = Timer.PASS_START | Timer.PASS_END) {
-        const passTimer = this.passTimers[passName];
+    gpuPassDescriptor(timerName, flags = Timer.PASS_START | Timer.PASS_END) {
+        if (!this.gpuTimers[timerName]) {
+            const querySet = this.device.createQuerySet({
+                type: "timestamp",
+                count: 2
+            });
+    
+            const resolveBuffer = this.device.createBuffer({
+                size: querySet.count * 8,
+                usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC
+            });
+    
+            const resultBuffer = this.device.createBuffer({
+                size: resolveBuffer.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });   
 
-        if (!passTimer) {
-            return undefined;
+            this.gpuTimers[timerName] = {
+                querySet,
+                resolveBuffer,
+                resultBuffer,
+                time: 0,
+                timeCount: 0,
+            }
+
+            this.gpuTimes[timerName] = 0;
         }
 
+        const timer = this.gpuTimers[timerName];
+
         const descriptor = {
-            querySet: passTimer.querySet
+            querySet: timer.querySet
         };
 
         if (flags & Timer.PASS_START) {
@@ -69,12 +59,12 @@ export class Timer {
         return descriptor;
     }
 
-    beforeSubmit(commandEncoder, passNames = this.passNames) {
-        passNames.forEach(passName => {
-            const passTimer = this.passTimers[passName];
+    gpuBeforeSubmit(commandEncoder, timerNames = Object.keys(this.gpuTimers)) {
+        timerNames.forEach(timerName => {
+            const timer = this.gpuTimers[timerName];
 
-            if (passTimer && passTimer.resultBuffer.mapState === "unmapped") {
-                const { querySet, resolveBuffer, resultBuffer } = passTimer;
+            if (timer && timer.resultBuffer.mapState === "unmapped") {
+                const { querySet, resolveBuffer, resultBuffer } = timer;
 
                 commandEncoder.resolveQuerySet(querySet, 0, querySet.count, resolveBuffer, 0);
                 commandEncoder.copyBufferToBuffer(resolveBuffer, 0, resultBuffer, 0, resultBuffer.size);
@@ -82,12 +72,12 @@ export class Timer {
         });
     }
 
-    afterSubmit(passNames = this.passNames) {
-        passNames.forEach(passName => {
-            const passTimer = this.passTimers[passName];
+    gpuAfterSubmit(timerNames = Object.keys(this.gpuTimers)) {
+        timerNames.forEach(timerName => {
+            const timer = this.gpuTimers[timerName];
 
-            if (passTimer && passTimer.resultBuffer.mapState === "unmapped") {
-                const { resultBuffer } = passTimer;
+            if (timer && timer.resultBuffer.mapState === "unmapped") {
+                const { resultBuffer } = timer;
                 resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
                     const [start, end] = new BigInt64Array(resultBuffer.getMappedRange());
                     resultBuffer.unmap();
@@ -95,17 +85,17 @@ export class Timer {
                     const time = Number(end - start);
     
                     if (time >= 0) {
-                        passTimer.time += time;
-                        ++passTimer.timeCount;
+                        timer.time += time;
+                        ++timer.timeCount;
                     } else {
-                        passTimer.time = 0;
-                        passTimer.timeCount = 0;
+                        timer.time = 0;
+                        timer.timeCount = 0;
                     }
     
-                    if (passTimer.timeCount === this.sampleCount) {
-                        this.gpuTimes[passName] = passTimer.time / this.sampleCount / 1000000;
-                        passTimer.time = 0;
-                        passTimer.timeCount = 0;
+                    if (timer.timeCount === this.sampleCount) {
+                        this.gpuTimes[timerName] = timer.time / this.sampleCount / 1000000;
+                        timer.time = 0;
+                        timer.timeCount = 0;
                     }
                 });
             }

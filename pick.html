@@ -90,7 +90,7 @@ addDescription(
 
     document.getElementById("device-info").innerText = parseAdapterInfo(adapterInfo);
 
-    const timer = new Timer(device, ["pick", "draw"]);
+    const timer = new Timer(device);
 
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const pickTimeDisplay = document.getElementById("pick-time");
@@ -506,7 +506,7 @@ addDescription(
             depthLoadOp: "clear",
             depthStoreOp: "store"
         },
-        timestampWrites: timer.passDescriptor("pick")
+        timestampWrites: timer.gpuPassDescriptor("pick")
     };
 
     const drawRenderPassDescription = {
@@ -523,7 +523,7 @@ addDescription(
             depthLoadOp: "clear",
             depthStoreOp: "store"
         },
-        timestampWrites: timer.passDescriptor("draw")
+        timestampWrites: timer.gpuPassDescriptor("draw")
     };
 
     // MOUSE HANDLER FOR PICKING
@@ -636,11 +636,11 @@ addDescription(
                 [1, 1]
             );
 
-            timer.beforeSubmit(pickCommandEncoder, ["pick"]);
+            timer.gpuBeforeSubmit(pickCommandEncoder, ["pick"]);
 
             device.queue.submit([pickCommandEncoder.finish()]);
 
-            timer.afterSubmit(["pick"])
+            timer.gpuAfterSubmit(["pick"])
 
             // Map buffer
             pickBuffer.mapAsync(GPUMapMode.READ).then(() => {
@@ -693,11 +693,11 @@ addDescription(
 
         renderPass.end();
 
-        timer.beforeSubmit(drawCommandEncoder, ["draw"]);
+        timer.gpuBeforeSubmit(drawCommandEncoder, ["draw"]);
 
         device.queue.submit([drawCommandEncoder.finish()]);
 
-        timer.afterSubmit(["draw"]);
+        timer.gpuAfterSubmit(["draw"]);
         timer.cpuTimeEnd("frame");
 
         cpuTimeDisplay.innerText = `${timer.cpuTimes["frame"].toFixed(2)}ms`;

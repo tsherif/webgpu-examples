@@ -87,7 +87,7 @@ addDescription(
 
     document.getElementById("device-info").innerText = parseAdapterInfo(adapterInfo);
 
-    const timer = new Timer(device, ["compute", "draw"]);
+    const timer = new Timer(device);
 
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const computeTimeDisplay = document.getElementById("compute-time");
@@ -224,7 +224,7 @@ addDescription(
     });
 
     const computePassDescription = {
-        timestampWrites: timer.passDescriptor("compute")
+        timestampWrites: timer.gpuPassDescriptor("compute")
     };
 
     ///////////////////////////////////
@@ -401,7 +401,7 @@ addDescription(
             storeOp: "store",
             clearValue: [0, 0, 0, 1]
         }],
-        timestampWrites: timer.passDescriptor("draw")
+        timestampWrites: timer.gpuPassDescriptor("draw")
     };
 
     window.addEventListener("resize", () => {
@@ -466,11 +466,11 @@ addDescription(
         // Submit command buffer
         //////////////////////////
 
-        timer.beforeSubmit(commandEncoder);
+        timer.gpuBeforeSubmit(commandEncoder);
 
         device.queue.submit([commandEncoder.finish()]);
 
-        timer.afterSubmit();
+        timer.gpuAfterSubmit();
         timer.cpuTimeEnd("frame");
 
         cpuTimeDisplay.innerText = `${timer.cpuTimes["frame"].toFixed(2)}ms`;

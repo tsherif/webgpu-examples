@@ -82,7 +82,7 @@ addDescription(
         requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
     });
 
-    const timer = new Timer(device, ["frame"]);
+    const timer = new Timer(device);
 
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const gpuTimeDisplay = document.getElementById("gpu-time");
@@ -385,8 +385,8 @@ addDescription(
         }
     });
 
-    canvases[0].renderPassDescriptor.timestampWrites =  timer.passDescriptor("frame", Timer.PASS_START);
-    canvases.at(-1).renderPassDescriptor.timestampWrites =  timer.passDescriptor("frame", Timer.PASS_END);
+    canvases[0].renderPassDescriptor.timestampWrites =  timer.gpuPassDescriptor("frame", Timer.PASS_START);
+    canvases.at(-1).renderPassDescriptor.timestampWrites =  timer.gpuPassDescriptor("frame", Timer.PASS_END);
 
     let lastTime;
     requestAnimationFrame(function draw(time) {
@@ -428,11 +428,11 @@ addDescription(
             renderPass.end();
         });
 
-        timer.beforeSubmit(commandEncoder, ["frame"]);
+        timer.gpuBeforeSubmit(commandEncoder, ["frame"]);
 
         device.queue.submit([commandEncoder.finish()]);
 
-        timer.afterSubmit(["frame"]);
+        timer.gpuAfterSubmit(["frame"]);
         timer.cpuTimeEnd("frame");
 
         cpuTimeDisplay.innerText = `${timer.cpuTimes["frame"].toFixed(2)}ms`;

@@ -99,7 +99,7 @@ addDescription(
     const gBufferTimeDisplay = document.getElementById("gbuffer-time");
     const lightingTimeDisplay = document.getElementById("lighting-time");
 
-    const timer = new Timer(device, ["lights", "gbuffer", "lighting"], 10);
+    const timer = new Timer(device, 10);
 
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -753,7 +753,7 @@ addDescription(
             depthLoadOp: "clear",
             depthStoreOp: "store"
         },
-        timestampWrites: timer.passDescriptor("lights")
+        timestampWrites: timer.gpuPassDescriptor("lights")
     };
 
     const gBufferRenderPassDescription = {
@@ -783,7 +783,7 @@ addDescription(
             depthLoadOp: "load",
             depthStoreOp: "store"
         },
-        timestampWrites: timer.passDescriptor("gbuffer")
+        timestampWrites: timer.gpuPassDescriptor("gbuffer")
     };
 
 
@@ -795,7 +795,7 @@ addDescription(
             loadOp: "load",
             storeOp: "store",
         }],
-        timestampWrites: timer.passDescriptor("lighting")
+        timestampWrites: timer.gpuPassDescriptor("lighting")
     };
 
     window.addEventListener("resize", () => {
@@ -994,11 +994,11 @@ addDescription(
         // Close command encoder and submit
         /////////////////////////////////////
         
-        timer.beforeSubmit(commandEncoder);
+        timer.gpuBeforeSubmit(commandEncoder);
 
         device.queue.submit([commandEncoder.finish()]);
 
-        timer.afterSubmit();
+        timer.gpuAfterSubmit();
 
         timer.cpuTimeEnd("frame");
 
