@@ -15,6 +15,10 @@ export class Timer {
     }
 
     gpuPassDescriptor(timerName, flags = Timer.PASS_START | Timer.PASS_END) {
+        if (!this.hasGPUTimer) {
+            return undefined;
+        }
+
         if (!this.gpuTimers[timerName]) {
             const querySet = this.device.createQuerySet({
                 type: "timestamp",
