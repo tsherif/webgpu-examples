@@ -75,12 +75,9 @@ addDescription(
     // Set up device and canvas context
     ////////////////////////////////////
 
-    const [adapterInfo, device] = await Promise.all([
-        adapter.requestAdapterInfo(),
-        adapter.requestDevice({
-            requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
-        })
-    ]);
+    const device = await adapter.requestDevice({
+        requiredFeatures: adapter.features.has("timestamp-query") ? ["timestamp-query"] : []
+    });
     
     const canvas = document.getElementById("webgpu-canvas");
     canvas.width = window.innerWidth;
@@ -92,7 +89,7 @@ addDescription(
         format: presentationFormat
     });
 
-    document.getElementById("device-info").innerText = parseAdapterInfo(adapterInfo);
+    document.getElementById("device-info").innerText = parseAdapterInfo(adapter.info);
 
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const lightsTimeDisplay = document.getElementById("lights-time");
