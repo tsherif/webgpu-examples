@@ -51,11 +51,14 @@ addDescription(
     "dof.html"
 );
 
-const FOV = Math.PI / 2;
-const NEAR = 0.01;
-const FAR = 10;
-
 (async () => {
+    const FOV = Math.PI / 2;
+    const NEAR = 0.1;
+    const FAR = 20;
+    const NUM_ROWS = 20;
+    const BOXES_PER_ROW = 5;
+    const NUM_BOXES = BOXES_PER_ROW * NUM_ROWS;
+
     //////////////////////////////////////////
     // Set up WebGPU adapter, load
     // texture image
@@ -152,8 +155,8 @@ const FAR = 10;
     mat4.perspectiveZO(projectionMatrix, FOV, canvas.width / canvas.height, NEAR, FAR);
 
     let viewMatrix = mat4.create();
-    let eyePosition = vec3.fromValues(0, 0.8, 0.5);
-    mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, -1), vec3.fromValues(0, 1, 0));
+    let eyePosition = vec3.fromValues(0, 2, 1);
+    mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, -2), vec3.fromValues(0, 1, 0));
 
     let viewProjectionMatrix = mat4.create();
     mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
@@ -308,7 +311,7 @@ const FAR = 10;
     ////////////
     // Objects
     ////////////
-    const boxes = new Array(300).fill(null).map((_, i) => {
+    const boxes = new Array(NUM_BOXES).fill(null).map((_, i) => {
 
         const drawUniformBuffer = device.createBuffer({
             size: 64,
@@ -342,21 +345,16 @@ const FAR = 10;
             ]
         });
 
+        const row = Math.floor(i / BOXES_PER_ROW);
+        const col = i % BOXES_PER_ROW;
+        const SPACING = 1.5;
+
         return {
-            translate: [
-                (i % 5 - 2) * 0.6,
-                0,
-                -Math.floor(i / 5) * 0.6
-            ],
+            translate: [(-BOXES_PER_ROW * 0.4 + col) * SPACING, 0, -row * SPACING],
             rotate: [
                 randomRange(0, 2 * Math.PI),
                 randomRange(0, 2 * Math.PI),
                 randomRange(0, 2 * Math.PI) 
-            ],
-            scale: [
-                0.3,
-                0.3,
-                0.3
             ],
             mvpMatrix: mat4.create(),
             modelMatrix: mat4.create(),
@@ -390,7 +388,7 @@ const FAR = 10;
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
-        mat4.perspectiveZO(projectionMatrix, FOX, canvas.width / canvas.height, NEAR, FAR)
+        mat4.perspectiveZO(projectionMatrix, FOV, canvas.width / canvas.height, NEAR, FAR)
         mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
 
         device.queue.writeBuffer(sceneUniformBuffer, 0, viewProjectionMatrix);
