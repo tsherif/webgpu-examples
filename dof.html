@@ -158,9 +158,6 @@ addDescription(
     let eyePosition = vec3.fromValues(0, 2, 1);
     mat4.lookAt(viewMatrix, eyePosition, vec3.fromValues(0, 0, -2), vec3.fromValues(0, 1, 0));
 
-    let viewProjectionMatrix = mat4.create();
-    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
-
     let lightPosition = vec3.fromValues(1, 1, 0.5);  
 
     ///////////////////
@@ -176,6 +173,21 @@ addDescription(
         sampleCount: 4
     });
 
+    let linearDepthTexture = device.createTexture({
+        label: 'linear depth texture',
+        size: [canvas.width, canvas.height],
+        format: "r16float",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount: 4
+    });
+
+    let linearDepthResolveTexture = device.createTexture({
+        label: 'linear depth resolve texture',
+        size: [canvas.width, canvas.height],
+        format: "r16float",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+
     let drawDepthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "depth24plus",
@@ -185,19 +197,21 @@ addDescription(
 
     // Scene uniforms that are only set once.
     const sceneUniformBuffer = device.createBuffer({
-        size: 96,
+        size: 160,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    device.queue.writeBuffer(sceneUniformBuffer, 0, viewProjectionMatrix);
-    device.queue.writeBuffer(sceneUniformBuffer, 64, eyePosition);
-    device.queue.writeBuffer(sceneUniformBuffer, 80, lightPosition);
+    device.queue.writeBuffer(sceneUniformBuffer, 0, viewMatrix);
+    device.queue.writeBuffer(sceneUniformBuffer, 64, projectionMatrix);
+    device.queue.writeBuffer(sceneUniformBuffer, 128, eyePosition);
+    device.queue.writeBuffer(sceneUniformBuffer, 144, lightPosition);
 
     const drawShaderModule = device.createShaderModule({
         code: `
 
             struct SceneUniforms {
-                viewProjectionMatrix: mat4x4f,
+                viewMatrix: mat4x4f,
+                projMatrix: mat4x4f,
                 eyePosition: vec4f,
                 lightPosition: vec4f
             };
@@ -211,6 +225,7 @@ addDescription(
                 @location(0) worldPosition: vec3f,
                 @location(1) normal: vec3f,
                 @location(2) uv: vec2f,
+                @location(3) depth: f32
             };
 
             @group(0) @binding(0) var<uniform> sceneUniforms: SceneUniforms;
@@ -223,23 +238,29 @@ addDescription(
                 @location(2) uv: vec2f,
             ) -> VSOut {
                 let worldPosition: vec4f = objectUniforms.worldMatrix * position;
+                let viewPosition: vec4f = sceneUniforms.viewMatrix * worldPosition;
 
                 var vsOut: VSOut;
-                vsOut.clipPosition = sceneUniforms.viewProjectionMatrix * worldPosition;
+                vsOut.clipPosition = sceneUniforms.projMatrix * viewPosition;
                 vsOut.worldPosition = worldPosition.xyz;
                 vsOut.normal = (objectUniforms.worldMatrix * vec4f(normal, 0.0)).xyz;
                 vsOut.uv = uv;
+                vsOut.depth = -viewPosition.z;
 
                 return vsOut;
             }
 
+            struct FSOut {
+                @location(0) color: vec4f,
+                @location(1) depth: f32,
+            }
             
 
             @group(0) @binding(2) var textureSampler: sampler;
             @group(0) @binding(3) var textureData: texture_2d<f32>;
 
             @fragment
-            fn fs(fsIn: VSOut) -> @location(0) vec4f {
+            fn fs(fsIn: VSOut) -> FSOut {
                 let surfaceColor: vec3f = textureSample(textureData, textureSampler, fsIn.uv).rgb;
 
                 let normal: vec3f = normalize(fsIn.normal);
@@ -249,7 +270,12 @@ addDescription(
                 let diffuse: f32 = max(dot(lightVec, normal), 0.0);
                 let highlight: f32 = pow(max(dot(eyeVec, reflect(incidentVec, normal)), 0.0), 100.0);
                 let ambient: f32 = 0.1;
-                return vec4f(surfaceColor * (diffuse + highlight + ambient), 1.0);
+                let color = vec4f(surfaceColor * (diffuse + highlight + ambient), 1.0);
+
+                var fsOut: FSOut;
+                fsOut.color = color;
+                fsOut.depth = fsIn.depth;
+                return fsOut;
             }
 
         `
@@ -290,9 +316,14 @@ addDescription(
         fragment: {
             module: drawShaderModule,
             entryPoint: "fs",
-            targets: [{
-                format: presentationFormat
-            }]
+            targets: [
+                {
+                    format: presentationFormat
+                },
+                {
+                    format: "r16float"
+                }
+            ]
         },
         multisample: {
             count: 4
@@ -356,7 +387,6 @@ addDescription(
                 randomRange(0, 2 * Math.PI),
                 randomRange(0, 2 * Math.PI) 
             ],
-            mvpMatrix: mat4.create(),
             modelMatrix: mat4.create(),
             drawUniformBuffer,
             drawBindGroup
@@ -368,13 +398,23 @@ addDescription(
     ///////////////////////////
 
     const drawRenderPassDescription = {
-        colorAttachments: [{
-            view: msaaTexture.createView(),
-            resolveTarget: context.getCurrentTexture().createView(),
-            loadOp: "clear",
-            storeOp: "store",
-            clearValue: [0, 0, 0, 1]
-        }],
+        colorAttachments: [
+            {
+                view: msaaTexture.createView(),
+                resolveTarget: context.getCurrentTexture().createView(),
+                loadOp: "clear",
+                storeOp: "store",
+                clearValue: [0, 0, 0, 1]
+            },
+            {
+                view: linearDepthTexture.createView(),
+                resolveTarget: linearDepthResolveTexture.createView(),
+                loadOp: "clear",
+                storeOp: "store",
+                clearValue: [0, 0, 0, 0]
+            }
+        
+        ],
         depthStencilAttachment: {
             view: drawDepthTexture.createView(),
             depthClearValue: 1,
@@ -389,9 +429,8 @@ addDescription(
         canvas.height = window.innerHeight;
 
         mat4.perspectiveZO(projectionMatrix, FOV, canvas.width / canvas.height, NEAR, FAR)
-        mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
 
-        device.queue.writeBuffer(sceneUniformBuffer, 0, viewProjectionMatrix);
+        device.queue.writeBuffer(sceneUniformBuffer, 64, projectionMatrix);
 
         msaaTexture.destroy();
         msaaTexture = device.createTexture({
@@ -400,6 +439,21 @@ addDescription(
             format: presentationFormat,
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
             sampleCount: 4
+        });
+        linearDepthTexture.destroy();
+        linearDepthTexture = device.createTexture({
+            label: 'linear depth texture',
+            size: [canvas.width, canvas.height],
+            format: "r16float",
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            sampleCount: 4
+        });
+
+        linearDepthResolveTexture = device.createTexture({
+            label: 'linear depth resolve texture',
+            size: [canvas.width, canvas.height],
+            format: "r16float",
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
 
         drawDepthTexture.destroy();
@@ -411,6 +465,8 @@ addDescription(
         });
 
         drawRenderPassDescription.colorAttachments[0].view = msaaTexture.createView()
+        drawRenderPassDescription.colorAttachments[1].view = linearDepthTexture.createView()
+        drawRenderPassDescription.colorAttachments[1].resolveTarget = linearDepthResolveTexture.createView()
         drawRenderPassDescription.depthStencilAttachment.view = drawDepthTexture.createView()
     });
         
@@ -428,7 +484,6 @@ addDescription(
             box.rotate[1] += 0.002 * dt;
 
             xformMatrix(box.modelMatrix, box.translate, box.rotate, box.scale);
-            mat4.multiply(box.mvpMatrix, viewProjectionMatrix, box.modelMatrix);
             
             device.queue.writeBuffer(box.drawUniformBuffer, 0, box.modelMatrix);
         }
