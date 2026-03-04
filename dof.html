@@ -39,7 +39,7 @@
     </div>
 </div>
 <script type="module">
-import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap, parseAdapterInfo } from "./utils/utils.js";
+import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap, parseAdapterInfo, createQuad } from "./utils/utils.js";
 import { Timer } from "./utils/Timer.js";
 
 const { mat4, vec3 } = glMatrix;
@@ -120,6 +120,19 @@ addDescription(
     device.queue.writeBuffer(normalBuffer, 0, cubeData.normals);
     device.queue.writeBuffer(uvBuffer, 0, cubeData.uvs);
 
+    const quadData = createQuad();
+
+    const quad = {
+        positions: device.createBuffer({
+            size: quadData.positions.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        }),
+        count: quadData.positions.length / 2
+    };
+    
+
+    device.queue.writeBuffer(quad.positions, 0, quadData.positions);
+    
     /////////////////////////////////////////
     // Create texture, sampler and load data
     //////////////////////////////////////////
@@ -168,9 +181,16 @@ addDescription(
     let msaaTexture = device.createTexture({
         label: 'msaa texture',
         size: [canvas.width, canvas.height],
-        format: presentationFormat,
+        format: "rgba8unorm",
         usage: GPUTextureUsage.RENDER_ATTACHMENT,
         sampleCount: 4
+    });
+
+    let colorResolveTexture = device.createTexture({
+        label: 'color resolve texture',
+        size: [canvas.width, canvas.height],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
 
     let linearDepthTexture = device.createTexture({
@@ -318,7 +338,7 @@ addDescription(
             entryPoint: "fs",
             targets: [
                 {
-                    format: presentationFormat
+                    format: "rgba8unorm"
                 },
                 {
                     format: "r16float"
@@ -337,6 +357,80 @@ addDescription(
             depthWriteEnabled: true,
             depthCompare: "less"
         }
+    });
+
+    ///////////////////////////////////
+    // DOF Pipeline
+    ///////////////////////////////////
+
+    // Shader module
+    const dofShaderModule = device.createShaderModule({
+        code: `
+
+            @vertex
+            fn vs(@location(0) position: vec4f) -> @builtin(position) vec4f {
+                return position;
+            }
+
+            @group(0) @binding(0) var colorTexture: texture_2d<f32>;
+
+            @fragment
+            fn fs(
+                @builtin(position) fragmentPosition: vec4f, 
+            ) -> @location(0) vec4f {
+                let canvasPosition = vec2u(fragmentPosition.xy);
+
+                let color = textureLoad(colorTexture, canvasPosition, 0);
+
+                return vec4f(color.rrr / 10.0, 1.0);
+            }
+
+        `
+    });
+
+
+    //// FIX THE PIPELINE HERE!!!!
+
+    // Pipeline
+    const dofPipeline = device.createRenderPipeline({
+        label: 'dof pipeline',
+        layout: 'auto',
+        vertex: {
+            module: dofShaderModule,
+            entryPoint: "vs",
+            buffers: [
+                {
+                    arrayStride: 8,
+                    attributes: [{
+                        shaderLocation: 0,
+                        format: "float32x2",
+                        offset: 0
+                    }]
+                },
+            ]
+        },
+        fragment: {
+            module: dofShaderModule,
+            entryPoint: "fs",
+            targets: [{
+                format: presentationFormat,
+            }],
+        },
+        primitive: {
+            topology: "triangle-strip",
+            cullMode: "back"
+        }
+    });
+
+    const dofBindGroup = device.createBindGroup({
+        layout: dofPipeline.getBindGroupLayout(0),
+        entries: [
+            {
+                binding: 0,
+                resource: linearDepthResolveTexture.createView()
+            }
+
+        ]
     });
 
     ////////////
@@ -401,7 +495,7 @@ addDescription(
         colorAttachments: [
             {
                 view: msaaTexture.createView(),
-                resolveTarget: context.getCurrentTexture().createView(),
+                resolveTarget: colorResolveTexture.createView(),
                 loadOp: "clear",
                 storeOp: "store",
                 clearValue: [0, 0, 0, 1]
@@ -422,6 +516,19 @@ addDescription(
             depthStoreOp: "store"
         },
         timestampWrites: timer.gpuPassDescriptor("draw")
+    };
+
+    const dofRenderPassDescription = {
+        colorAttachments: [
+            {
+                view: context.getCurrentTexture().createView(),
+                loadOp: "clear",
+                storeOp: "store",
+                clearValue: [0, 0, 0, 1]
+            }
+        
+        ],
+        timestampWrites: timer.gpuPassDescriptor("dof")
     };
 
     window.addEventListener("resize", () => {
@@ -492,10 +599,8 @@ addDescription(
         // Draw
         ///////////
 
-        drawRenderPassDescription.colorAttachments[0].resolveTarget = context.getCurrentTexture().createView();
-
-        const drawCommandEncoder = device.createCommandEncoder();
-        const renderPass = drawCommandEncoder.beginRenderPass(drawRenderPassDescription);
+        const commandEncoder = device.createCommandEncoder();
+        const renderPass = commandEncoder.beginRenderPass(drawRenderPassDescription);
 
         renderPass.setPipeline(drawPipeline);
         renderPass.setVertexBuffer(0, positionBuffer);
@@ -509,11 +614,20 @@ addDescription(
 
         renderPass.end();
 
-        timer.gpuBeforeSubmit(drawCommandEncoder, ["draw"]);
+        dofRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
-        device.queue.submit([drawCommandEncoder.finish()]);
+        const dogCommandEncoder = device.createCommandEncoder();
+        const dofRenderPass = commandEncoder.beginRenderPass(dofRenderPassDescription);
 
-        timer.gpuAfterSubmit(["draw"]);
+        dofRenderPass.setPipeline(dofPipeline);
+        dofRenderPass.setVertexBuffer(0, quad.positions);
+        dofRenderPass.setBindGroup(0, dofBindGroup);
+        dofRenderPass.draw(quad.count);           
+        dofRenderPass.end();
+
+        timer.gpuBeforeSubmit(commandEncoder);
+        device.queue.submit([commandEncoder.finish()]);
+        timer.gpuAfterSubmit();
         timer.cpuTimeEnd("frame");
 
         cpuTimeDisplay.innerText = `${timer.cpuTimes["frame"].toFixed(2)}ms`;
