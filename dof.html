@@ -363,29 +363,63 @@ addDescription(
     // DOF Pipeline
     ///////////////////////////////////
 
-    const FOCAL_LENGTH = 1.0;
-    const FOCUS_DISTANCE = 2.0;
+    const FOCAL_LENGTH = 1.5;
+    const FOCUS_DISTANCE = 3.0;
     const MAGNIFICATION = FOCAL_LENGTH / Math.abs(FOCUS_DISTANCE - FOCAL_LENGTH);
     const FSTOP = 2.8;
     const BLUR_COEFFICIENT = FOCAL_LENGTH * MAGNIFICATION / FSTOP;
-    const PPM = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) / 35;   
+    const PPM = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) / 35;
+    
+    let hblurTexture = device.createTexture({
+        label: 'dof hblur texture',
+        size: [canvas.width, canvas.height],
+        format: presentationFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
 
     // DOF uniforms that are only set once.
-    const dofUniformBuffer = device.createBuffer({
-        label: "dof uniforms",
-        size: 32,
+    const resolutionUniformBuffer = device.createBuffer({
+        label: "dof resolution uniforms",
+        size: 16,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
     device.queue.writeBuffer(
-        dofUniformBuffer, 0, 
+        resolutionUniformBuffer, 0, 
         new Float32Array([
-            1.0, 0.0,
             canvas.width,
             canvas.height,
+            PPM,
+        ])
+    );
+
+    const dofHBlurUniformBuffer = device.createBuffer({
+        label: "dof hblur uniforms",
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(
+        dofHBlurUniformBuffer, 0, 
+        new Float32Array([
+            1.0, 0.0,
             FOCUS_DISTANCE,
             BLUR_COEFFICIENT,
-            PPM,
+        ])
+    );
+
+    const dofVBlurUniformBuffer = device.createBuffer({
+        label: "dof vblur uniforms",
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(
+        dofVBlurUniformBuffer, 0, 
+        new Float32Array([
+            0.0, 1.0,
+            FOCUS_DISTANCE,
+            BLUR_COEFFICIENT,
         ])
     );
     
@@ -400,17 +434,23 @@ addDescription(
                 return position;
             }
 
-            struct DOFUniforms {
-                sampleDirection: vec2f,
+
+            struct ResolutionUniforms {
                 resolution: vec2f,
-                focusDistance: f32,
-                blurCoefficient: f32,
                 ppm: f32
             };
 
-            @group(0) @binding(0) var<uniform> dofUniforms: DOFUniforms;
-            @group(0) @binding(1) var colorTexture: texture_2d<f32>;
-            @group(0) @binding(2) var depthTexture: texture_2d<f32>;
+            struct DOFUniforms {
+                sampleDirection: vec2f,
+                focusDistance: f32,
+                blurCoefficient: f32,
+                
+            };
+
+            @group(0) @binding(0) var<uniform> resolutionUniforms: ResolutionUniforms;
+            @group(0) @binding(1) var<uniform> dofUniforms: DOFUniforms;
+            @group(0) @binding(2) var colorTexture: texture_2d<f32>;
+            @group(0) @binding(3) var depthTexture: texture_2d<f32>;
 
             @fragment
             fn fs(
@@ -421,8 +461,8 @@ addDescription(
                 let depth = textureLoad(depthTexture, canvasPosition, 0).r;
                 let deltaDepth = abs(dofUniforms.focusDistance - depth);
                 let xdd = select(abs(dofUniforms.focusDistance + deltaDepth), abs(dofUniforms.focusDistance - deltaDepth), depth < dofUniforms.focusDistance);
-                let blurRadius = min(floor(dofUniforms.blurCoefficient * (deltaDepth / xdd) * dofUniforms.ppm), MAX_BLUR);
-                let maxCoord = vec2i(dofUniforms.resolution - 1.0);
+                let blurRadius = min(floor(dofUniforms.blurCoefficient * (deltaDepth / xdd) * resolutionUniforms.ppm), MAX_BLUR);
+                let maxCoord = vec2i(resolutionUniforms.resolution - 1.0);
 
                 var color = vec4f(0.0);
 
@@ -486,21 +526,54 @@ addDescription(
         }
     });
 
-    const dofBindGroup = device.createBindGroup({
+    const dofHBlurBindGroup = device.createBindGroup({
         layout: dofPipeline.getBindGroupLayout(0),
         entries: [
             {
                 binding: 0,
                 resource: {
-                    buffer: dofUniformBuffer
+                    buffer: resolutionUniformBuffer
                 }
             },
             {
                 binding: 1,
-                resource: colorResolveTexture.createView()
+                resource: {
+                    buffer: dofHBlurUniformBuffer
+                }
             },
             {
                 binding: 2,
+                resource: colorResolveTexture.createView()
+            },
+            {
+                binding: 3,
+                resource: linearDepthResolveTexture.createView()
+            }
+
+        ]
+    });
+
+    const dofVBlurBindGroup = device.createBindGroup({
+        layout: dofPipeline.getBindGroupLayout(0),
+        entries: [
+            {
+                binding: 0,
+                resource: {
+                    buffer: resolutionUniformBuffer
+                }
+            },
+            {
+                binding: 1,
+                resource: {
+                    buffer: dofVBlurUniformBuffer
+                }
+            },
+            {
+                binding: 2,
+                resource: hblurTexture.createView()
+            },
+            {
+                binding: 3,
                 resource: linearDepthResolveTexture.createView()
             }
 
@@ -688,16 +761,25 @@ addDescription(
 
         renderPass.end();
 
+        dofRenderPassDescription.colorAttachments[0].view = hblurTexture.createView();
+
+        const dofHBlurRenderPass = commandEncoder.beginRenderPass(dofRenderPassDescription);
+
+        dofHBlurRenderPass.setPipeline(dofPipeline);
+        dofHBlurRenderPass.setVertexBuffer(0, quad.positions);
+        dofHBlurRenderPass.setBindGroup(0, dofHBlurBindGroup);
+        dofHBlurRenderPass.draw(quad.count);           
+        dofHBlurRenderPass.end();
+
         dofRenderPassDescription.colorAttachments[0].view = context.getCurrentTexture().createView();
 
-        const dogCommandEncoder = device.createCommandEncoder();
-        const dofRenderPass = commandEncoder.beginRenderPass(dofRenderPassDescription);
+        const dofVBlurRenderPass = commandEncoder.beginRenderPass(dofRenderPassDescription);
 
-        dofRenderPass.setPipeline(dofPipeline);
-        dofRenderPass.setVertexBuffer(0, quad.positions);
-        dofRenderPass.setBindGroup(0, dofBindGroup);
-        dofRenderPass.draw(quad.count);           
-        dofRenderPass.end();
+        dofVBlurRenderPass.setPipeline(dofPipeline);
+        dofVBlurRenderPass.setVertexBuffer(0, quad.positions);
+        dofVBlurRenderPass.setBindGroup(0, dofVBlurBindGroup);
+        dofVBlurRenderPass.draw(quad.count);           
+        dofVBlurRenderPass.end();
 
         timer.gpuBeforeSubmit(commandEncoder);
         device.queue.submit([commandEncoder.finish()]);
