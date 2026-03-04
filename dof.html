@@ -373,13 +373,14 @@ addDescription(
     // DOF uniforms that are only set once.
     const dofUniformBuffer = device.createBuffer({
         label: "dof uniforms",
-        size: 24,
+        size: 32,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
     device.queue.writeBuffer(
         dofUniformBuffer, 0, 
         new Float32Array([
+            1.0, 0.0,
             canvas.width,
             canvas.height,
             FOCUS_DISTANCE,
@@ -400,6 +401,7 @@ addDescription(
             }
 
             struct DOFUniforms {
+                sampleDirection: vec2f,
                 resolution: vec2f,
                 focusDistance: f32,
                 blurCoefficient: f32,
@@ -420,7 +422,6 @@ addDescription(
                 let deltaDepth = abs(dofUniforms.focusDistance - depth);
                 let xdd = select(abs(dofUniforms.focusDistance + deltaDepth), abs(dofUniforms.focusDistance - deltaDepth), depth < dofUniforms.focusDistance);
                 let blurRadius = min(floor(dofUniforms.blurCoefficient * (deltaDepth / xdd) * dofUniforms.ppm), MAX_BLUR);
-                let texelOffset = vec2f(1.0 / dofUniforms.resolution.x, dofUniforms.resolution.y);
                 let maxCoord = vec2i(dofUniforms.resolution - 1.0);
 
                 var color = vec4f(0.0);
@@ -436,7 +437,7 @@ addDescription(
                         }
 
                         // texelFetch outside texture gives vec4(0.0) (undefined in ES 3)
-                        let sampleCoord = clamp(canvasPosition + vec2i(((i - halfBlur) * texelOffset)), vec2i(0), maxCoord);
+                        let sampleCoord = clamp(canvasPosition + vec2i(((i - halfBlur) * dofUniforms.sampleDirection)), vec2i(0), maxCoord);
                         color += textureLoad(colorTexture, sampleCoord, 0);
 
                         count += 1.0;
@@ -447,7 +448,7 @@ addDescription(
                     color = textureLoad(colorTexture, canvasPosition, 0);
                 }
 
-                return vec4f(depth / 10.0, depth / 10.0, depth / 10.0, 1.0);
+                return color;
             }
 
         `
