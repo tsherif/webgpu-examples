@@ -363,33 +363,96 @@ addDescription(
     // DOF Pipeline
     ///////////////////////////////////
 
+    const FOCAL_LENGTH = 1.0;
+    const FOCUS_DISTANCE = 2.0;
+    const MAGNIFICATION = FOCAL_LENGTH / Math.abs(FOCUS_DISTANCE - FOCAL_LENGTH);
+    const FSTOP = 2.8;
+    const BLUR_COEFFICIENT = FOCAL_LENGTH * MAGNIFICATION / FSTOP;
+    const PPM = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) / 35;   
+
+    // DOF uniforms that are only set once.
+    const dofUniformBuffer = device.createBuffer({
+        label: "dof uniforms",
+        size: 24,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    device.queue.writeBuffer(
+        dofUniformBuffer, 0, 
+        new Float32Array([
+            canvas.width,
+            canvas.height,
+            FOCUS_DISTANCE,
+            BLUR_COEFFICIENT,
+            PPM,
+        ])
+    );
+    
     // Shader module
     const dofShaderModule = device.createShaderModule({
         code: `
+
+            const MAX_BLUR: f32 = 20.0;
 
             @vertex
             fn vs(@location(0) position: vec4f) -> @builtin(position) vec4f {
                 return position;
             }
 
-            @group(0) @binding(0) var colorTexture: texture_2d<f32>;
+            struct DOFUniforms {
+                resolution: vec2f,
+                focusDistance: f32,
+                blurCoefficient: f32,
+                ppm: f32
+            };
+
+            @group(0) @binding(0) var<uniform> dofUniforms: DOFUniforms;
+            @group(0) @binding(1) var colorTexture: texture_2d<f32>;
+            @group(0) @binding(2) var depthTexture: texture_2d<f32>;
 
             @fragment
             fn fs(
                 @builtin(position) fragmentPosition: vec4f, 
             ) -> @location(0) vec4f {
-                let canvasPosition = vec2u(fragmentPosition.xy);
+                let canvasPosition = vec2i(fragmentPosition.xy);
 
-                let color = textureLoad(colorTexture, canvasPosition, 0);
+                let depth = textureLoad(depthTexture, canvasPosition, 0).r;
+                let deltaDepth = abs(dofUniforms.focusDistance - depth);
+                let xdd = select(abs(dofUniforms.focusDistance + deltaDepth), abs(dofUniforms.focusDistance - deltaDepth), depth < dofUniforms.focusDistance);
+                let blurRadius = min(floor(dofUniforms.blurCoefficient * (deltaDepth / xdd) * dofUniforms.ppm), MAX_BLUR);
+                let texelOffset = vec2f(1.0 / dofUniforms.resolution.x, dofUniforms.resolution.y);
+                let maxCoord = vec2i(dofUniforms.resolution - 1.0);
 
-                return vec4f(color.rrr / 10.0, 1.0);
+                var color = vec4f(0.0);
+
+                if (blurRadius > 1.0) {
+                    let halfBlur = blurRadius * 0.5;
+
+                    var count: f32 = 0.0;
+
+                    for (var i: f32 = 0.0; i <= MAX_BLUR; i += 1.0) {
+                        if (i > blurRadius) {
+                            break;
+                        }
+
+                        // texelFetch outside texture gives vec4(0.0) (undefined in ES 3)
+                        let sampleCoord = clamp(canvasPosition + vec2i(((i - halfBlur) * texelOffset)), vec2i(0), maxCoord);
+                        color += textureLoad(colorTexture, sampleCoord, 0);
+
+                        count += 1.0;
+                    }
+
+                    color /= count;
+                } else {
+                    color = textureLoad(colorTexture, canvasPosition, 0);
+                }
+
+                return vec4f(depth / 10.0, depth / 10.0, depth / 10.0, 1.0);
             }
 
         `
     });
 
-
-    //// FIX THE PIPELINE HERE!!!!
 
     // Pipeline
     const dofPipeline = device.createRenderPipeline({
@@ -427,6 +490,16 @@ addDescription(
         entries: [
             {
                 binding: 0,
+                resource: {
+                    buffer: dofUniformBuffer
+                }
+            },
+            {
+                binding: 1,
+                resource: colorResolveTexture.createView()
+            },
+            {
+                binding: 2,
                 resource: linearDepthResolveTexture.createView()
             }
 
