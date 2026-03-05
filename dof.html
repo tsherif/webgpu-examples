@@ -37,6 +37,9 @@
     <div>
         GPU Draw Time: <span id="draw-time"></span>
     </div>
+     <div>
+        GPU DOF Time: <span id="dof-time"></span>
+    </div>
 </div>
 <script type="module">
 import { checkSupport, addDescription, loadImageBitmaps, createCube, xformMatrix, randomRange, getMipLevelCount, generate2DMipmap, parseAdapterInfo, createQuad } from "./utils/utils.js";
@@ -95,6 +98,7 @@ addDescription(
 
     const cpuTimeDisplay = document.getElementById("cpu-time");
     const drawTimeDisplay = document.getElementById("draw-time");
+    const dofTimeDisplay = document.getElementById("dof-time");
     
     ////////////////////////////////////////
     // Create vertex buffers and load data
@@ -885,6 +889,7 @@ addDescription(
 
         cpuTimeDisplay.innerText = `${timer.cpuTimes["frame"].toFixed(2)}ms`;
         drawTimeDisplay.innerText = timer.hasGPUTimer ? `${timer.gpuTimes["draw"].toFixed(2)}ms` : "N/A";
+        dofTimeDisplay.innerText = timer.hasGPUTimer ? `${timer.gpuTimes["dof"].toFixed(2)}ms` : "N/A";
 
         requestAnimationFrame(draw);
     }
