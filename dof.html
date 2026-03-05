@@ -27,6 +27,9 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 -->
+<!-- 
+    DOF algorithm from http://www.nutty.ca/?page_id=352&link=depth_of_field
+ -->
 <body>
 <canvas id="webgpu-canvas"></canvas>
 <div id="stats">
@@ -50,7 +53,7 @@ const { mat4, vec3 } = glMatrix;
 checkSupport();
 addDescription(
     "Depth of Field",
-    "Mimic camera focus effects in screen space.",
+    "Simulate camera focus effects in screen space.",
     "dof.html"
 );
 
@@ -166,8 +169,9 @@ addDescription(
     generate2DMipmap(device, texture);
 
      ///////////////////////
-    // Uniform values
+    // Draw uniform values
     ////////////////////////
+
     let projectionMatrix = mat4.create();
     mat4.perspectiveZO(projectionMatrix, FOV, canvas.width / canvas.height, NEAR, FAR);
 
@@ -181,7 +185,7 @@ addDescription(
     // Draw pipeline
     ///////////////////
 
-    // Render targets
+    // MSAA draw color render target.
     let msaaTexture = device.createTexture({
         label: 'msaa texture',
         size: [canvas.width, canvas.height],
@@ -190,6 +194,7 @@ addDescription(
         sampleCount: 4
     });
 
+    // Single-sample draw color render target for resolve.
     let colorResolveTexture = device.createTexture({
         label: 'color resolve texture',
         size: [canvas.width, canvas.height],
@@ -197,6 +202,7 @@ addDescription(
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
 
+    // MSAA view space depth output from draw shader.
     let linearDepthTexture = device.createTexture({
         label: 'linear depth texture',
         size: [canvas.width, canvas.height],
@@ -205,6 +211,7 @@ addDescription(
         sampleCount: 4
     });
 
+    // Single-sample view space depth for resolve.
     let linearDepthResolveTexture = device.createTexture({
         label: 'linear depth resolve texture',
         size: [canvas.width, canvas.height],
@@ -212,6 +219,7 @@ addDescription(
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
 
+    // Draw depth texture for depth testing.
     let drawDepthTexture = device.createTexture({
         size: [canvas.width, canvas.height],
         format: "depth24plus",
@@ -230,6 +238,8 @@ addDescription(
     device.queue.writeBuffer(sceneUniformBuffer, 128, eyePosition);
     device.queue.writeBuffer(sceneUniformBuffer, 144, lightPosition);
 
+    // Draw shader explicitly outputs view space depth so it 
+    // can resolve and be used in dof postprocessing.
     const drawShaderModule = device.createShaderModule({
         code: `
 
@@ -363,22 +373,24 @@ addDescription(
         }
     });
 
-    ///////////////////////////////////
+    //////////////////////////////////////////////////////
     // DOF Pipeline
-    ///////////////////////////////////
+    // Pass 1: Input resolved draw color and depth,
+    //     perform horizontal blur, output to offscreen
+    //     texture.
+    // Pass 2: Input horizontal blur color and draw depth,
+    //     perform vertical blur, output to canvas.
+    //////////////////////////////////////////////////////
 
+    // DOF parameters
     const FOCAL_LENGTH = 1.5;
     const FOCUS_DISTANCE = 3.0;
     const MAGNIFICATION = FOCAL_LENGTH / Math.abs(FOCUS_DISTANCE - FOCAL_LENGTH);
     const FSTOP = 2.8;
     const BLUR_COEFFICIENT = FOCAL_LENGTH * MAGNIFICATION / FSTOP;
     const PPM_DIVISOR = 35;
-    const resolutionData = new Float32Array([
-        canvas.width,
-        canvas.height,
-        Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) / PPM_DIVISOR
-    ]);
     
+    // Render target for horizontal blurr pass.
     let hblurTexture = device.createTexture({
         label: 'dof hblur texture',
         size: [canvas.width, canvas.height],
@@ -386,7 +398,8 @@ addDescription(
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
 
-    // DOF uniforms that are only set once.
+
+    // Sampling direction for each pass.
     const dofHorizontalUniformBuffer = device.createBuffer({
         label: "dof horizontal uniforms",
         size: 8,
@@ -413,6 +426,12 @@ addDescription(
         ])
     );
 
+    // Uniforms related to canvas size.
+    const resolutionData = new Float32Array([
+        canvas.width,
+        canvas.height,
+        Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) / PPM_DIVISOR
+    ]);
 
     const resolutionUniformBuffer = device.createBuffer({
         label: "dof resolution uniforms",
@@ -422,6 +441,7 @@ addDescription(
 
     device.queue.writeBuffer(resolutionUniformBuffer, 0, resolutionData);
 
+    // General DOF parameters.
     const dofUniformBuffer = device.createBuffer({
         label: "dof uniforms",
         size: 8,
@@ -436,7 +456,6 @@ addDescription(
         ])
     );
     
-    // Shader module
     const dofShaderModule = device.createShaderModule({
         code: `
 
@@ -512,8 +531,6 @@ addDescription(
         `
     });
 
-
-    // Pipeline
     const dofPipeline = device.createRenderPipeline({
         label: 'dof pipeline',
         layout: 'auto',
@@ -544,6 +561,8 @@ addDescription(
         }
     });
 
+    // Bind groups for uniforms specfic to each dof pass:
+    // sampling direction and color input texture.
     let dofHorizontalBindGroup = device.createBindGroup({
         layout: dofPipeline.getBindGroupLayout(0),
         entries: [
@@ -578,6 +597,7 @@ addDescription(
         ]
     });
 
+    // Uniforms shared by both passes.
     let dofBindGroup = device.createBindGroup({
         layout: dofPipeline.getBindGroupLayout(1),
         entries: [
@@ -659,6 +679,9 @@ addDescription(
     // Render pass description
     ///////////////////////////
 
+    // MSAA draw pass resolves for postprocessing.
+    // Also outputs linear depth from the shader 
+    // so it can be resolved and used in postprocessing.
     const drawRenderPassDescription = {
         colorAttachments: [
             {
@@ -859,6 +882,13 @@ addDescription(
         }
 
         renderPass.end();
+
+
+        //////////////////////////////////////////////
+        // DOF as 2-pass separable blur
+        // The only change between passes is the 
+        // render target and the first bind group.
+        //////////////////////////////////////////////
 
         dofRenderPassDescription.colorAttachments[0].view = hblurTexture.createView();
 
