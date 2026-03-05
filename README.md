@@ -12,7 +12,7 @@ Rendering algorithms implemented in WebGPU.
 - [Depth of Field](https://tsherif.github.io/webgpu-examples/dof.html): Simulating camera depth of field effects as a postprocessing pass.
 
 
-Examples currently only run without special flags in Chrome on Windows and OSX. See the [Implementation Status](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status) page for updates on support. 
+Examples currently only run without special flags in Chrome. See the [Implementation Status](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status) page for updates on support. 
 
 All examples are implemented in a single HTML file with minimal use of functions, modules, classes or other abstractions. The goal is to allow the reader to easily see, in sequential order, all WebGPU calls that are made. They can be run locally by serving them from a local HTTP server, e.g. `python -m http.server`.
 
